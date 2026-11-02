@@ -1,6 +1,6 @@
 import { HIGHLIGHT_MAX_SOURCE_BYTES } from "@getpaseo/highlight";
 import { describe, expect, it } from "vitest";
-import { expandedOffset, expandTabs, highlightPreview, previewSpans, surfaceColorScheme } from "./highlight";
+import { expandedOffset, expandTabs, highlightPreview, previewSpans, sourceOffset, surfaceColorScheme } from "./highlight";
 
 describe("file preview", () => {
   it("uses Paseo keyword tokens and preserves Python text", async () => {
@@ -31,6 +31,17 @@ describe("file preview", () => {
     for (let offset = 0; offset <= source.length; offset += 1) {
       expect(expandedOffset(source, offset)).toBe(expandTabs(source.slice(0, offset)).length);
     }
+    for (let offset = 0; offset <= source.length; offset += 1) {
+      expect(sourceOffset(source, expandedOffset(source, offset))).toBe(offset);
+    }
+    // A display offset inside a tab maps to the tab's start. Past the end clamps to the line length.
+    expect(sourceOffset("a\tb", 2)).toBe(1);
+    expect(sourceOffset("a\tb", 99)).toBe(3);
+    // One forward scan: a selection at the end of a 1 MiB minified line maps without a per-character rescan.
+    const long = "x".repeat(1024 * 1024);
+    const started = performance.now();
+    expect(sourceOffset(long, long.length - 1)).toBe(long.length - 1);
+    expect(performance.now() - started).toBeLessThan(500);
     expect(expandTabs("a\tb", 8)).toBe("a       b");
     expect(expandedOffset("a\tb", -1)).toBe(0);
     expect(expandedOffset("a\tb", 99)).toBe(5);

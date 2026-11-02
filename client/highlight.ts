@@ -77,6 +77,21 @@ export function expandedOffset(text: string, offset: number, tabSize = 4): numbe
   return expanded;
 }
 
+/** Map an offset after tab expansion back to a UTF-16 source offset. An offset inside a tab maps to the tab's start. */
+export function sourceOffset(text: string, displayed: number, tabSize = 4): number {
+  let column = 0;
+  let expanded = 0;
+  let index = 0;
+  for (; index < text.length; index += 1) {
+    const character = text.charCodeAt(index);
+    const width = character === 9 ? tabSize - column % tabSize : 1;
+    if (expanded + width > displayed) break;
+    expanded += width;
+    column = character === 10 || character === 13 ? 0 : column + width;
+  }
+  return index;
+}
+
 export type PreviewSpan = HighlightToken & { matched: boolean };
 
 export function previewSpans(

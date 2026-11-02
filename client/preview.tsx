@@ -8,7 +8,7 @@ import { z } from "zod";
 import { fileRead, fileWrite, formatSnippet, snippetAdd } from "../shared/contracts";
 import { findDefaults, findSettings } from "../shared/settings";
 import { OpenInEditorButton, useEditorTargets } from "./editors";
-import { expandedOffset, highlightPreview, previewSpans, surfaceColorScheme } from "./highlight";
+import { expandedOffset, highlightPreview, previewSpans, sourceOffset, surfaceColorScheme } from "./highlight";
 import { withAlpha } from "./palette";
 import { readPaseoSyntaxTheme, subscribePaseoSyntaxTheme, type TextPick, watchTextSelection } from "./web";
 
@@ -359,12 +359,7 @@ function FileLines({ content, target, token, revision, theme, layout, onAddToCon
     if (pressingMenu.current) return;
     setTextPick(pick && { ...pick, top: pick.top + scrollY.current });
   }), []);
-  // The page shows lines with tabs expanded. Map a displayed offset back to the source line.
-  const sourceOffset = (line: string, displayed: number) => {
-    let offset = 0;
-    while (offset < line.length && expandedOffset(line, offset + 1) <= displayed) offset++;
-    return offset;
-  };
+  // The page shows lines with tabs expanded. `sourceOffset` maps a displayed offset back to the source line.
   const pick: (Snippet & { top: number }) | null = textPick
     ? {
       startLine: textPick.start.line,
