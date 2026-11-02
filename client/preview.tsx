@@ -82,9 +82,10 @@ export function PreviewPanel({ workspaceId, theme, layout, tab, revision, store 
   return (
     <View style={{ flex: 1, minHeight: 0, backgroundColor: colors.surface0 }}>
       <View style={{ padding, gap: 6, borderBottomWidth: 1, borderColor: colors.border }}>
-        <Text selectable numberOfLines={2} style={{ color: colors.foreground, fontSize: 13 }}>{target?.relativePath ?? "Search preview"}</Text>
-        {target && (
-          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 12, rowGap: 6 }}>
+          <Text selectable numberOfLines={2} style={{ flexShrink: 1, flexGrow: 1, flexBasis: 200, minWidth: 0, color: colors.foreground, fontSize: 13 }}>{target?.relativePath ?? "Search preview"}</Text>
+          {target && (
+          <View style={{ marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 8 }}>
             <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>Line {target.line}, column {target.column}</Text>
             <Pressable
               accessibilityRole="button"
@@ -109,7 +110,8 @@ export function PreviewPanel({ workspaceId, theme, layout, tab, revision, store 
               <Text style={{ color: colors.foreground, fontSize: 12 }}>Open in VS Code</Text>
             </Pressable>
           </View>
-        )}
+          )}
+        </View>
         {editor.isError && <Text selectable style={{ color: colors.statusDanger, fontSize: 12 }}>{editor.error.message}</Text>}
       </View>
       {!target ? (
