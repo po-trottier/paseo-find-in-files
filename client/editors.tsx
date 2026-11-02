@@ -1,7 +1,7 @@
 import { type PluginWorkspacePanelProps, useRpc } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { Image, Platform, Pressable, Text, View } from "react-native";
 import { workspaceLocate } from "../shared/contracts";
 
@@ -34,10 +34,29 @@ function storedEditor(key: string): string | null {
   }
 }
 
+// One choice for every panel: the preview menu and the result rows read the same value.
+let chosenEditor: string | null | undefined;
+const chosenListeners = new Set<() => void>();
+function readChosen(): string | null {
+  if (chosenEditor === undefined) chosenEditor = editorBridge() ? storedEditor(PLUGIN_KEY) : null;
+  return chosenEditor;
+}
+function subscribeChosen(listener: () => void): () => void {
+  chosenListeners.add(listener);
+  return () => chosenListeners.delete(listener);
+}
+function chooseEditor(editorId: string): void {
+  chosenEditor = editorId;
+  try {
+    window.localStorage?.setItem(PLUGIN_KEY, editorId);
+  } catch {}
+  for (const listener of chosenListeners) listener();
+}
+
 export function useEditorTargets(workspaceId: string, serverId: string): EditorTargets {
   const bridge = editorBridge();
   const locate = useRpc(workspaceLocate);
-  const [chosen, setChosen] = useState(() => bridge ? storedEditor(PLUGIN_KEY) : null);
+  const chosen = useSyncExternalStore(subscribeChosen, readChosen, readChosen);
   const query = useQuery({
     queryKey: ["find-in-files", "editors", serverId, workspaceId],
     enabled: bridge !== null,
@@ -63,13 +82,7 @@ export function useEditorTargets(workspaceId: string, serverId: string): EditorT
     const filePath = `${data.workspacePath.replace(/[\\/]+$/, "")}${separator}${relativePath.split("/").join(separator)}`;
     await bridge.openTarget({ editorId, workspacePath: data.workspacePath, filePath, line, column });
   }, [bridge, data]);
-  const choose = useCallback((editorId: string) => {
-    setChosen(editorId);
-    try {
-      window.localStorage?.setItem(PLUGIN_KEY, editorId);
-    } catch {}
-  }, []);
-  return { targets, preferred, open, choose };
+  return { targets, preferred, open, choose: chooseEditor };
 }
 
 export interface EditorTargets {
