@@ -135,6 +135,12 @@ function blocked(context: Safety, absolutePath: string): boolean {
   return context.blockedCloudRoots.some((cloudRoot) => contains(cloudRoot, absolutePath));
 }
 
+/** True when the directory is inside a OneDrive root. Reads there can download cloud files. */
+export async function insideCloudRoot(directory: string): Promise<boolean> {
+  const { root } = await safety(directory);
+  return (await cloudDirectories).some((roots) => roots.some((cloudRoot) => contains(cloudRoot, root)));
+}
+
 async function inspect(context: Safety, relativePath: string, kind: "file" | "directory" | "entry" = "file"): Promise<{ absolutePath: string; info: Stats } | null> {
   const parts = relativePath ? segments(relativePath) : kind === "directory" ? [] : null;
   if (!parts) return null;

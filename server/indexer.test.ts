@@ -374,4 +374,26 @@ describe("workspace content index", () => {
       await files.rm(root, { recursive: true, force: true });
     }
   });
+
+  it("does not automatically index a workspace inside a OneDrive root", async () => {
+    const cloud = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-cloud-"));
+    const workspace = path.join(cloud, "project");
+    const watch = watchFixture();
+    const manager = new IndexManager();
+    vi.stubEnv("OneDrive", cloud);
+    vi.stubEnv("OneDriveCommercial", "");
+    vi.stubEnv("OneDriveConsumer", "");
+    try {
+      await files.mkdir(workspace);
+      await files.writeFile(path.join(workspace, "a.txt"), "cloudmarker");
+      const index = await manager.get(workspace);
+      expect(index.status().state).toBe("manual");
+      expect(watch.spy).not.toHaveBeenCalled();
+    } finally {
+      await manager.dispose();
+      vi.unstubAllEnvs();
+      watch.spy.mockRestore();
+      await files.rm(cloud, { recursive: true, force: true });
+    }
+  });
 });

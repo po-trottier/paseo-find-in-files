@@ -43,7 +43,7 @@ The daemon resolves the workspace directory through the Paseo SDK. The file walk
 
 The walker includes hidden files and directories unless ignore rules exclude them. It skips nested repositories and worktrees that contain a `.git` file or directory.
 
-The walker excludes cloud roots from the Windows `OneDrive`, `OneDriveCommercial`, and `OneDriveConsumer` environment variables. This guard does not apply when the workspace itself is inside that cloud root. Other small remote placeholder files can still download when read.
+The walker excludes cloud roots from the Windows `OneDrive`, `OneDriveCommercial`, and `OneDriveConsumer` environment variables. This guard does not apply when the workspace itself is inside that cloud root. For such a workspace, automatic indexing stays off, but a search or a Build index reads its files and can download them. Other small remote placeholder files can still download when read.
 
 The index stores lowercase ASCII byte trigrams and file metadata in memory. Search intersects the required trigram lists, then checks candidate files with the actual matcher. Regex plans use only required literal text. A pattern with no safe trigrams scans all eligible files.
 

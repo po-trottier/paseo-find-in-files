@@ -265,7 +265,7 @@ export function SearchPanel({
         : !index.data
           ? disconnected ? "Index unavailable while the host is disconnected." : "Checking index…"
           : manualIndex
-            ? "Indexing is off for this folder because it is large."
+            ? "Indexing is off for this folder because it is large or synced to the cloud."
             : index.data.state === "building"
               ? `Indexing… ${index.data.filesIndexed.toLocaleString()} files${index.data.partial ? " · partial index" : ""}`
               : index.data.state === "ready"

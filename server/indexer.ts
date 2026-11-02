@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { setImmediate as yieldTurn } from "node:timers/promises";
 import type { IndexStatus } from "../shared/index";
-import { checkAborted, WorkspaceFiles, type IndexFileRead, type WalkFile } from "./files";
+import { checkAborted, insideCloudRoot, WorkspaceFiles, type IndexFileRead, type WalkFile } from "./files";
 import { trigrams, type QueryPlan } from "./planner";
 
 const MAX_POSTING_ENTRIES = 32_000_000;
@@ -56,7 +56,11 @@ export class IndexManager {
       this.indexes.set(key, existing);
       return existing;
     }
-    const manual = key === directoryKey(home) || key === directoryKey(path.parse(canonical).root);
+    const manual = key === directoryKey(home) || key === directoryKey(path.parse(canonical).root)
+      || await insideCloudRoot(canonical);
+    if (this.closed) throw new Error("The search indexes are closed.");
+    const raced = this.indexes.get(key);
+    if (raced) return raced;
     const index = new WorkspaceIndex(canonical, this.budget, manual);
     this.indexes.set(key, index);
     if (this.indexes.size > MAX_DIRECTORIES) {
