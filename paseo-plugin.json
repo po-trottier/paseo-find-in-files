@@ -1,0 +1,8 @@
+{
+  "id": "find-in-files",
+  "name": "Find in Files",
+  "description": "Search workspace content from the Explorer pane and preview matches.",
+  "requirements": {
+    "paseo": ">=0.14.0"
+  }
+}
