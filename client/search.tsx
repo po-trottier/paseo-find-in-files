@@ -546,9 +546,11 @@ function MatchRow({ path, match, theme, layout, disabled, onPreview, onEditor }:
   const visible = layout.compact || touch || hovered || focused;
   const colors = theme.colors;
   const targetSize = layout.compact ? 44 : 30;
-  const text = expandTabs(match.text);
-  const start = expandedOffset(match.text, match.start);
-  const end = expandedOffset(match.text, match.end);
+  const localStart = Math.min(match.text.length, match.start - match.textStart);
+  const text = (match.textStart > 0 ? "…" : "") + expandTabs(match.text);
+  const shift = match.textStart > 0 ? 1 : 0;
+  const start = shift + expandedOffset(match.text, localStart);
+  const end = shift + expandedOffset(match.text, Math.min(match.text.length, match.end - match.textStart));
   const whitespace = layout.platform === "web" ? { whiteSpace: "pre" } as TextStyle & { whiteSpace: "pre" } : null;
   return (
     <View
@@ -560,7 +562,7 @@ function MatchRow({ path, match, theme, layout, disabled, onPreview, onEditor }:
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Preview ${path}, line ${match.line}, column ${match.start + 1}`}
-        accessibilityHint={match.text}
+        accessibilityHint={text}
         onPress={onPreview}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}

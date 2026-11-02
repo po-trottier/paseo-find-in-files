@@ -14,7 +14,9 @@ export const searchInputSchema = z.object({
 
 export const matchSchema = z.object({
   line: z.number().int().positive(),
+  /** A window of the line. `textStart` is its offset in the line. `start` and `end` are offsets in the full line. */
   text: z.string(),
+  textStart: z.number().int().nonnegative(),
   start: z.number().int().nonnegative(),
   end: z.number().int().nonnegative(),
 });

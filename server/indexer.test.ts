@@ -208,7 +208,7 @@ describe("workspace content index", () => {
       const selected = await index.candidates(planQuery(input.query, input.regex, input.caseSensitive));
       const verified = await verifyFiles(root, selected, input, new AbortController().signal);
       expect(verified).toEqual({
-        files: [{ path: "first.txt", matches: [{ line: 1, text: "é😀 ALPHA one beta", start: 4, end: 9 }] }],
+        files: [{ path: "first.txt", matches: [{ line: 1, text: "é😀 ALPHA one beta", textStart: 0, start: 4, end: 9 }] }],
         totalMatches: 1, totalFiles: 1, truncated: false,
       });
     } finally {

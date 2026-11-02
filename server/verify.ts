@@ -51,6 +51,9 @@ const workerSource = String.raw`
   const MAX_FILE_BYTES = 1024 * 1024;
   const MAX_MATCHES = 2000;
   const MAX_RESULT_BYTES = 2 * 1024 * 1024;
+  // A result row shows a window of the line, so one long line (minified JSON) cannot fill the result budget.
+  const CONTEXT_CHARS = 40;
+  const SNIPPET_CHARS = 300;
   const utf8 = new TextDecoder("utf-8", { fatal: true });
   const skippedErrors = { ENOENT: true, ENOTDIR: true, EACCES: true, EPERM: true, ELOOP: true, EISDIR: true, ENXIO: true, EBUSY: true, EINVAL: true };
   let incomplete = false;
@@ -205,12 +208,14 @@ const workerSource = String.raw`
         }
         const text = content.slice(lineStart, lineEnd);
         expression.lastIndex = 0;
-        let textBytes;
-        let storedText;
         let match;
         while ((match = expression.exec(text)) !== null) {
-          if (textBytes === undefined) textBytes = Buffer.byteLength(JSON.stringify(text), "utf8");
-          const rowBytes = textBytes + 96 + (file ? 0 : Buffer.byteLength(JSON.stringify(relativePath), "utf8") + 32);
+          let from = match.index > CONTEXT_CHARS * 1.5 ? match.index - CONTEXT_CHARS : 0;
+          if (from > 0 && (text.charCodeAt(from) & 0xfc00) === 0xdc00) from--;
+          let to = Math.min(text.length, from + SNIPPET_CHARS);
+          if (to < text.length && (text.charCodeAt(to - 1) & 0xfc00) === 0xd800) to--;
+          const snippet = text.slice(from, to);
+          const rowBytes = Buffer.byteLength(JSON.stringify(snippet), "utf8") + 112 + (file ? 0 : Buffer.byteLength(JSON.stringify(relativePath), "utf8") + 32);
           if (resultBytes + rowBytes > MAX_RESULT_BYTES || totalMatches >= MAX_MATCHES) {
             truncated = true;
             break scan;
@@ -219,8 +224,7 @@ const workerSource = String.raw`
             file = { path: relativePath, matches: [] };
             files.push(file);
           }
-          if (storedText === undefined) storedText = Buffer.from(text, "utf8").toString("utf8");
-          file.matches.push({ line: lineNumber, text: storedText, start: match.index, end: match.index + match[0].length });
+          file.matches.push({ line: lineNumber, text: Buffer.from(snippet, "utf8").toString("utf8"), textStart: from, start: match.index, end: match.index + match[0].length });
           resultBytes += rowBytes;
           totalMatches++;
           if (totalMatches >= MAX_MATCHES) {

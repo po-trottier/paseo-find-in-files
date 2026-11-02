@@ -64,10 +64,10 @@ describe("isolated file verification", () => {
       await writeFile(path.join(root, "words.txt"), "hit hit_ hité _hit 2hit HIT\r\né😀 hit\rfinal hit");
       const insensitive = await verifyFiles(root, ["words.txt"], { ...input, wholeWord: true }, new AbortController().signal);
       expect(insensitive.files[0].matches).toEqual([
-        { line: 1, text: "hit hit_ hité _hit 2hit HIT", start: 0, end: 3 },
-        { line: 1, text: "hit hit_ hité _hit 2hit HIT", start: 24, end: 27 },
-        { line: 2, text: "é😀 hit", start: 4, end: 7 },
-        { line: 3, text: "final hit", start: 6, end: 9 },
+        { line: 1, text: "hit hit_ hité _hit 2hit HIT", textStart: 0, start: 0, end: 3 },
+        { line: 1, text: "hit hit_ hité _hit 2hit HIT", textStart: 0, start: 24, end: 27 },
+        { line: 2, text: "é😀 hit", textStart: 0, start: 4, end: 7 },
+        { line: 3, text: "final hit", textStart: 0, start: 6, end: 9 },
       ]);
       const sensitive = await verifyFiles(root, ["words.txt"], { ...input, caseSensitive: true, wholeWord: true }, new AbortController().signal);
       expect(sensitive.totalMatches).toBe(3);
@@ -86,10 +86,10 @@ describe("isolated file verification", () => {
       await writeFile(path.join(root, "empty.txt"), "😀a");
       for (const [query, start] of [["Kabc", 0], ["Sabc", 5]] as const) {
         const result = await verifyFiles(root, ["unicode.txt"], { ...input, query }, new AbortController().signal);
-        expect(result.files[0].matches[0]).toEqual({ line: 1, text: "Kabc ſabc", start, end: start + 4 });
+        expect(result.files[0].matches[0]).toEqual({ line: 1, text: "\u212Aabc ſabc", textStart: 0, start, end: start + 4 });
       }
       const literal = await verifyFiles(root, ["unicode.txt"], { ...input, query: "a+b [x]" }, new AbortController().signal);
-      expect(literal.files[0].matches[0]).toEqual({ line: 2, text: "a+b [x]", start: 0, end: 7 });
+      expect(literal.files[0].matches[0]).toEqual({ line: 2, text: "a+b [x]", textStart: 0, start: 0, end: 7 });
       const empty = await verifyFiles(root, ["empty.txt"], { ...input, query: "(?:)", regex: true }, new AbortController().signal);
       expect(empty.files[0].matches.map(({ start, end }) => [start, end])).toEqual([[0, 0], [2, 2], [3, 3]]);
       const greedy = await verifyFiles(root, ["empty.txt"], { ...input, query: ".*", regex: true }, new AbortController().signal);
@@ -104,13 +104,33 @@ describe("isolated file verification", () => {
     try {
       await writeFile(path.join(root, "bom.txt"), "\uFEFFhit\r\nnext");
       const bom = await verifyFiles(root, ["bom.txt"], { ...input, query: "^hit$", regex: true }, new AbortController().signal);
-      expect(bom.files[0].matches).toEqual([{ line: 1, text: "hit", start: 0, end: 3 }]);
+      expect(bom.files[0].matches).toEqual([{ line: 1, text: "hit", textStart: 0, start: 0, end: 3 }]);
       if (process.platform !== "win32") {
         const name = "part\\name.txt";
         await writeFile(path.join(root, name), "hit");
         const result = await verifyFiles(root, [name], { ...input, include: "*.txt" }, new AbortController().signal);
         expect(result.files.map((file) => file.path)).toEqual([name]);
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a window of long lines so one minified file cannot fill the result budget", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-search-worker-"));
+    try {
+      const filler = "x".repeat(300_000);
+      // The window starts 40 code units before a match. Here that lands on the low surrogate of 😀.
+      await writeFile(path.join(root, "min.json"), `${filler}hit${filler}😀${"y".repeat(39)}hit${filler}hit`);
+      await writeFile(path.join(root, "later.ts"), "hit");
+      const result = await verifyFiles(root, ["min.json", "later.ts"], input, new AbortController().signal);
+      expect(result.truncated).toBe(false);
+      expect(result.files.map((file) => [file.path, file.matches.length])).toEqual([["min.json", 3], ["later.ts", 1]]);
+      for (const match of result.files[0].matches) {
+        expect(match.text.length).toBeLessThanOrEqual(300);
+        expect(match.text.slice(match.start - match.textStart, match.end - match.textStart)).toBe("hit");
+      }
+      expect(result.files[0].matches[1].text.startsWith("😀y")).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
