@@ -124,8 +124,9 @@ export function OpenInEditorButton({ editors, theme, layout, relativePath, line,
   return (
     <View style={{ zIndex: 10 }}>
       <View style={{ flexDirection: "row", borderRadius: 6, borderWidth: 1, borderColor: colors.border, overflow: "hidden" }}>
-        <Pressable accessibilityRole="button" accessibilityLabel={`Open in ${preferred.label}`} onPress={() => open(preferred.id)} style={({ pressed }) => segment(pressed)}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Open in ${preferred.label}`} onPress={() => open(preferred.id)} style={({ pressed }) => ({ ...segment(pressed), flexDirection: "row", gap: 6, paddingHorizontal: 8 })}>
           <TargetIcon target={preferred} color={colors.foreground} />
+          <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13 }}>{`Open in ${preferred.label}`}</Text>
         </Pressable>
         <View style={{ width: 1, backgroundColor: colors.border }} />
         <Pressable accessibilityRole="button" accessibilityLabel="Choose an editor" accessibilityState={{ expanded: menu }} onPress={() => setMenu(!menu)} style={({ pressed }) => segment(pressed)}>
