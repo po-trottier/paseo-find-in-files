@@ -31,11 +31,17 @@ Use Match case, Whole word, or Regex inside the query field to change the search
 
 The status row shows index progress, completion time, and errors. Select **Rebuild index** to rebuild it. Searches use a direct scan before the index is ready. The results identify a direct scan.
 
-Automatic indexing stays off for the user's home directory and file system roots. Select **Build index** to start it explicitly. Searches in these folders still use a direct scan. A restored query stays paused until you press Enter or edit it.
+Automatic indexing stays off for the user's home directory, file system roots, and folders inside OneDrive. Select **Build index** to start it explicitly. Searches in these folders use a direct scan. A restored query stays paused until you press Enter or edit it.
 
 Results appear below collapsible file headers. Select a match to reuse the read-only preview tab. Select **Open in VS Code** to open that file at its line and column on the daemon machine.
 
-Query options and the preview target remain in tab state after a reload. The plugin does not use plugin settings documents.
+Preview keeps indentation and expands tabs to four-column stops. It colors syntax with the same engine as Paseo. The selected line and query match remain marked. Syntax uses at most 768 KiB of source and a 200 ms work budget. Larger files and lines with more than 256 syntax tokens remain plain text.
+
+Query options and the preview target remain in tab state after a reload. The plugin settings screen controls the syntax theme and search shortcut. GitHub is the default syntax theme.
+
+The default shortcut is **Ctrl+Alt+Shift+F** on Windows and Linux, or **Command+Option+Shift+F** on macOS. Paseo 0.14 does not assign this chord. Its **Ctrl/Command+Shift+F** chord controls focus mode instead. Select the shortcut value in the plugin settings to capture a new chord. Select **Clear** to disable it.
+
+The shortcut works only on web and desktop workspace routes. It stays inactive in detected terminals and modal dialogs. This detection is best effort. Native clients use the Command Center. The shortcut uses an internal route until Paseo provides a plugin shortcut API.
 
 ## Data and limits
 
@@ -76,10 +82,15 @@ paseo plugin ls
 paseo plugin logs find-in-files
 ```
 
-Tests cover query plans, ignore rules, index updates, file size limits, exact match offsets, containment, and editor URL arguments. Tests do not launch an editor.
+Tests cover query plans, ignore rules, index updates, file size limits, match offsets, containment, and editor URL arguments. They also cover Python syntax tokens, tabs, shortcut chords, and workspace routes. Tests do not launch an editor.
 
 Paseo contracts: [plugin reference](https://paseo.sh/docs/plugins/reference).
 
 ## Icon attribution
 
 The Match case, Whole word, and Regex icons come from [Visual Studio Code Codicons](https://github.com/microsoft/vscode-codicons). Microsoft licenses these icons under [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/). The plugin embeds their SVG paths and uses the Paseo theme for their color.
+
+## Syntax engine license
+
+The plugin uses `@getpaseo/highlight` 0.14.0. The [Paseo 0.14.0 license](https://github.com/getpaseo/paseo/blob/v0.14.0/LICENSE) covers Paseo code under Apache-2.0. Third-party components retain their own licenses. The package includes an [MIT license for its Astro parser](https://github.com/getpaseo/paseo/blob/v0.14.0/packages/highlight/src/astro/LICENSE).
+

@@ -32,6 +32,7 @@
     "zod": "^4.4.3"
   },
   "dependencies": {
+    "@getpaseo/highlight": "0.14.0",
     "ignore": "^7.0.14",
     "minimatch": "10.2.5"
   }

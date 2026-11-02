@@ -1,10 +1,13 @@
-import type { PluginClientContext, PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
+import type { PluginClientContext, PluginSurfaceProps, PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
 import { createPreviewStore, PreviewPanel } from "./client/preview";
 import type { PreviewTarget } from "./client/preview";
 import { SearchPanel } from "./client/search";
+import { FindSettings } from "./client/settings";
+import { registerSearchShortcut } from "./client/web";
 
 export default function contribute(client: PluginClientContext) {
   const preview = createPreviewStore();
+  const shortcut = registerSearchShortcut(client);
   function openPreview(workspaceId: string, target: PreviewTarget) {
     preview.select(workspaceId, target);
     client.openPanel("preview", { workspaceId });
@@ -15,6 +18,15 @@ export default function contribute(client: PluginClientContext) {
   function Preview(props: PluginWorkspacePanelProps) {
     return <PreviewPanel {...props} store={preview} />;
   }
+  function Settings(props: PluginSurfaceProps) {
+    return <FindSettings {...props} shortcut={shortcut} />;
+  }
+  const removeSettings = client.addSettingsScreen({
+    id: "preferences",
+    title: "Find in files",
+    icon: "Search",
+    Component: Settings,
+  });
   const removeSearch = client.addWorkspacePanel({
     id: "search",
     title: "Search",
@@ -39,10 +51,12 @@ export default function contribute(client: PluginClientContext) {
       openPanel("search", { location: "explorer" });
     },
   });
-  return () => {
+  return async () => {
     removeCommand();
     removeSearch();
     removePreview();
+    removeSettings();
     preview.clear();
+    await shortcut.dispose();
   };
 }

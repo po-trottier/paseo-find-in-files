@@ -5,6 +5,7 @@ import { IndexManager } from "./server/indexer";
 import { planQuery } from "./server/planner";
 import { verifyFiles } from "./server/verify";
 import { editorOpen, fileRead, indexRebuild, indexStatus, searchRun } from "./shared/contracts";
+import { findSettings } from "./shared/settings";
 
 async function workspaceDirectory(paseo: PluginHandlerContext["paseo"], workspaceId: string): Promise<string> {
   const workspace = await paseo.workspaces.ref(workspaceId).refresh();
@@ -17,6 +18,7 @@ function emptySearch(): RpcOutput<typeof searchRun> {
 }
 
 export default function contribute(server: PluginServerContext) {
+  server.registerSettings(findSettings);
   const searches = new Map<string, AbortController>();
   const indexes = new IndexManager();
   server.handle(indexStatus, async ({ workspaceId }, { paseo }) => {
@@ -43,7 +45,7 @@ export default function contribute(server: PluginServerContext) {
       if (controller.signal.aborted) return emptySearch();
       const result = await verifyFiles(directory, candidates, input, controller.signal);
       if (controller.signal.aborted) return emptySearch();
-      return { ...result, index: { state: status.state, files: status.filesIndexed, partial: status.partial } };
+      return { ...result, index: { state: status.state, files: status.filesIndexed, partial: status.partial || index.status().partial } };
     } catch (error) {
       if (controller.signal.aborted) return emptySearch();
       throw error;

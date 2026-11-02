@@ -6,6 +6,8 @@ Automatic indexing stays off for home directories, file system roots, and worksp
 
 Use literal text or a regular expression. Match case, match whole words, and use include or exclude globs to limit files. The file walker respects nested `.gitignore` and `.ignore` files. It does not follow symbolic links. Query options and the preview target remain in each tab after a reload.
 
+Preview keeps indentation, expands tabs to four columns, and colors syntax with the Paseo engine. Select a syntax theme in the plugin settings. Files that exceed the syntax budget remain plain text.
+
 The plugin requires Paseo 0.14.0 or later. Search runs inside the plugin and requires no external search program or setup step. The daemon supports Windows, macOS, and Linux. The client uses the Paseo theme and supports compact layouts.
 
 Search reads files on the daemon machine. Results and preview text go to the connected Paseo client, not an agent provider. Search and preview skip files above 1 MiB and binary files. Small remote placeholder files can still download when read. Each search stops at 2,000 matches and also limits total result size. Match verification stops after 15 seconds.

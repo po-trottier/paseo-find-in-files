@@ -1,16 +1,20 @@
-import { type PluginWorkspacePanelProps, useRpc, useTabState } from "@getpaseo/plugin/client";
+import { isSyntaxThemeId, resolveSyntaxColors, type HighlightToken } from "@getpaseo/highlight";
+import { type PluginWorkspacePanelProps, useRpc, useSettings, useTabState } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ActivityIndicator, FlatList, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, Pressable, ScrollView, Text, type TextStyle, View } from "react-native";
 import { z } from "zod";
 import { editorOpen, fileRead } from "../shared/contracts";
+import { findSettings } from "../shared/settings";
+import { expandedOffset, highlightPreview, previewSpans, surfaceColorScheme } from "./highlight";
 import { withAlpha } from "./palette";
 
 const previewTargetSchema = z.object({
   relativePath: z.string().min(1).max(32768),
   line: z.number().int().min(1).max(2147483647),
   column: z.number().int().min(1).max(2147483647),
+  endColumn: z.number().int().min(1).max(2147483647).optional(),
 });
 export type PreviewTarget = z.infer< typeof previewTargetSchema>;
 const previewStateSchema = z.object({ target: previewTargetSchema.nullable() });
@@ -52,7 +56,7 @@ export function PreviewPanel({ workspaceId, theme, layout, tab, revision, store 
   useEffect(() => {
     if (!selection) return;
     const next = selection.target;
-    if (state.target?.relativePath !== next.relativePath || state.target.line !== next.line || state.target.column !== next.column) {
+    if (state.target?.relativePath !== next.relativePath || state.target.line !== next.line || state.target.column !== next.column || state.target.endColumn !== next.endColumn) {
       setState({ target: next });
     }
   }, [selection, state.target, setState]);
@@ -87,7 +91,7 @@ export function PreviewPanel({ workspaceId, theme, layout, tab, revision, store 
               accessibilityLabel="Open in VS Code"
               accessibilityState={{ disabled: editor.isPending }}
               disabled={editor.isPending}
-              onPress={() => editor.mutate({ workspaceId, ...target })}
+              onPress={() => editor.mutate({ workspaceId, relativePath: target.relativePath, line: target.line, column: target.column })}
               style={({ pressed }) => ({
                 minHeight: targetSize,
                 paddingHorizontal: 8,
@@ -135,7 +139,7 @@ export function PreviewPanel({ workspaceId, theme, layout, tab, revision, store 
         <FileLines
           key={`${workspaceId}:${path}`}
           content={file.data.content}
-          selectedLine={target.line}
+          target={target}
           token={selection?.token ?? 0}
           revision={revision}
           theme={theme}
@@ -146,9 +150,11 @@ export function PreviewPanel({ workspaceId, theme, layout, tab, revision, store 
   );
 }
 
-function FileLines({ content, selectedLine, token, revision, theme, layout }: {
+const preformattedStyle: TextStyle & { whiteSpace: "pre" } = { whiteSpace: "pre" };
+
+function FileLines({ content, target, token, revision, theme, layout }: {
   content: string;
-  selectedLine: number;
+  target: PreviewTarget;
   token: number;
   revision: number;
   theme: PluginWorkspacePanelProps["theme"];
@@ -162,23 +168,33 @@ function FileLines({ content, selectedLine, token, revision, theme, layout }: {
   const file = useMemo(() => {
     const lines = content.split(/\r\n|\n|\r/);
     let longest = 0;
-    for (const line of lines) {
-      let columns = line.length;
-      for (let index = 0; index < line.length; index += 1) {
-        if (line.charCodeAt(index) === 9) columns += 7;
-      }
-      longest = Math.max(longest, columns);
-    }
+    for (const line of lines) longest = Math.max(longest, expandedOffset(line, line.length));
     const gutter = Math.max(42, String(lines.length).length * 9 + 16);
     return { lines, gutter, width: gutter + 24 + longest * fontSize };
   }, [content]);
-  const selectedIndex = Math.min(file.lines.length - 1, Math.max(0, selectedLine - 1));
+  const selectedIndex = Math.min(file.lines.length - 1, Math.max(0, target.line - 1));
   const jump = useCallback(() => {
     list.current?.scrollToIndex({ index: selectedIndex, animated: false, viewPosition: 0.35 });
   }, [selectedIndex]);
   useEffect(() => {
     if (viewport.height > 0) jump();
   }, [jump, viewport.height, rowHeight, revision, token]);
+  const settings = useSettings(findSettings);
+  const syntaxTheme = settings.status === "ready" && isSyntaxThemeId(settings.values.syntaxTheme) ? settings.values.syntaxTheme : "github";
+  const syntaxColors = useMemo(
+    () => resolveSyntaxColors(syntaxTheme, surfaceColorScheme(theme.colors.surface0)),
+    [syntaxTheme, theme.colors.surface0],
+  );
+  const [highlighted, setHighlighted] = useState<{ content: string; lines: HighlightToken[][] } | null>(null);
+  useEffect(() => {
+    const lifetime = new AbortController();
+    setHighlighted(null);
+    void highlightPreview(content, target.relativePath, lifetime.signal).then((lines) => {
+      if (lines && !lifetime.signal.aborted) setHighlighted({ content, lines });
+    });
+    return () => lifetime.abort();
+  }, [content, target.relativePath]);
+  const tokenLines = highlighted?.content === content ? highlighted.lines : null;
   const colors = theme.colors;
 
   return (
@@ -195,7 +211,7 @@ function FileLines({ content, selectedLine, token, revision, theme, layout }: {
           accessibilityLabel="Read-only file preview"
           style={{ width: Math.max(viewport.width, file.width), height: viewport.height, backgroundColor: colors.surface0 }}
           data={file.lines}
-          extraData={selectedIndex}
+          extraData={highlighted}
           keyExtractor={(_, index) => String(index)}
           initialScrollIndex={selectedIndex}
           getItemLayout={(_, index) => ({ length: rowHeight, offset: rowHeight * index, index })}
@@ -212,7 +228,25 @@ function FileLines({ content, selectedLine, token, revision, theme, layout }: {
               >
                 {index + 1}
               </Text>
-              <Text selectable numberOfLines={1} style={{ flex: 1, color: colors.foreground, fontSize, fontFamily, lineHeight: 20 }}>{item || " "}</Text>
+              <Text
+                selectable
+                numberOfLines={1}
+                style={[{ flex: 1, color: colors.foreground, fontSize, fontFamily, lineHeight: 20 }, layout.platform === "web" ? preformattedStyle : undefined]}
+              >
+                {previewSpans(item, tokenLines?.[index], index === selectedIndex ? {
+                  start: target.column - 1,
+                  end: (target.endColumn ?? target.column + 1) - 1,
+                } : undefined).map((span, spanIndex) => (
+                  <Text
+                    key={spanIndex}
+                    style={span.matched
+                      ? { color: colors.foreground, backgroundColor: withAlpha(colors.accent, "60") }
+                      : { color: span.style ? syntaxColors[span.style] : colors.foreground }}
+                  >
+                    {span.text}
+                  </Text>
+                ))}
+              </Text>
             </View>
           )}
         />

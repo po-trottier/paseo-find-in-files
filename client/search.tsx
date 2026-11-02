@@ -12,6 +12,7 @@ import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View, type Tex
 import { z } from "zod";
 import { editorOpen, indexRebuild, indexStatus, searchRun, type SearchMatch } from "../shared/contracts";
 import { caseSensitiveIcon, regexIcon, wholeWordIcon } from "./icons";
+import { expandTabs, expandedOffset } from "./highlight";
 import { withAlpha } from "./palette";
 import type { PreviewTarget } from "./preview";
 
@@ -509,7 +510,7 @@ export function SearchPanel({
               theme={theme}
               layout={layout}
               disabled={editor.isPending}
-              onPreview={() => onPreview(workspaceId, { relativePath: item.path, line: item.match.line, column: item.match.start + 1 })}
+              onPreview={() => onPreview(workspaceId, { relativePath: item.path, line: item.match.line, column: item.match.start + 1, endColumn: item.match.end + 1 })}
               onEditor={() => editor.mutate({ workspaceId, relativePath: item.path, line: item.match.line, column: item.match.start + 1 })}
             />
           )}
@@ -534,6 +535,10 @@ function MatchRow({ path, match, theme, layout, disabled, onPreview, onEditor }:
   const visible = layout.compact || touch || hovered || focused;
   const colors = theme.colors;
   const targetSize = layout.compact ? 44 : 30;
+  const text = expandTabs(match.text);
+  const start = expandedOffset(match.text, match.start);
+  const end = expandedOffset(match.text, match.end);
+  const whitespace = layout.platform === "web" ? { whiteSpace: "pre" } as TextStyle & { whiteSpace: "pre" } : null;
   return (
     <View
       onPointerEnter={(event) => { setTouch(event.nativeEvent.pointerType !== "mouse"); setHovered(true); }}
@@ -561,10 +566,10 @@ function MatchRow({ path, match, theme, layout, disabled, onPreview, onEditor }:
         })}
       >
         <Text style={{ minWidth: 26, textAlign: "right", color: colors.foregroundMuted, fontSize: 11 }}>{match.line}</Text>
-        <Text numberOfLines={1} style={{ flex: 1, color: colors.foreground, fontSize: 12, fontFamily: "monospace" }}>
-          {match.text.slice(0, match.start)}
-          <Text style={{ color: colors.foreground, backgroundColor: withAlpha(colors.accent, "40") }}>{match.text.slice(match.start, match.end) || "│"}</Text>
-          {match.text.slice(match.end)}
+        <Text numberOfLines={1} style={[{ flex: 1, color: colors.foreground, fontSize: 12, fontFamily: "monospace" }, whitespace]}>
+          {text.slice(0, start)}
+          <Text style={{ color: colors.foreground, backgroundColor: withAlpha(colors.accent, "40") }}>{text.slice(start, end) || "│"}</Text>
+          {text.slice(end)}
         </Text>
       </Pressable>
       <Pressable
