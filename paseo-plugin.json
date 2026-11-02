@@ -2,7 +2,11 @@
   "id": "find-in-files",
   "name": "Find in Files",
   "description": "Search workspace content from the Explorer pane and preview matches.",
+  "media": [
+    "https://raw.githubusercontent.com/po-trottier/paseo-find-in-files/main/assets/search-and-preview.png"
+  ],
   "requirements": {
     "paseo": ">=0.14.0"
-  }
+  },
+  "build": [["npm", "ci", "--omit=dev", "--ignore-scripts"]]
 }

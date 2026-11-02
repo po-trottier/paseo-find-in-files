@@ -2,6 +2,8 @@
 
 Search workspace content from the Search tab beside Files and Changes in Paseo's Explorer pane.
 
+<img alt="Search results in the Explorer pane and the file preview in Paseo" src="assets/search-and-preview.png" width="900">
+
 ## Requirements
 
 Paseo desktop and daemon 0.14.0 or later are required. Search uses Node inside the plugin. No external search program or setup step is required.
@@ -10,16 +12,20 @@ Open in VS Code requires VS Code on the daemon machine. The daemon supports Wind
 
 ## Install
 
-Run these commands from this repository:
+```sh
+paseo plugin add git:po-trottier/paseo-find-in-files
+```
+
+Open the Command Center and select **Find in files** in a workspace. The command opens the Explorer Search tab.
+
+For development, install from a local clone:
 
 ```text
 npm install
 npm run typecheck
 npm test
-paseo plugin install .
+paseo plugin add .
 ```
-
-Open the Command Center and select **Find in files** in a workspace. The command opens the Explorer Search tab.
 
 After a source change, run `paseo plugin reload find-in-files`. Do not restart Paseo.
 

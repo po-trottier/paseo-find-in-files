@@ -4,6 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "description": "Search workspace content from the Explorer pane and preview matches.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/po-trottier/paseo-find-in-files.git"
+  },
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
@@ -14,7 +18,8 @@
     "index.server.tsx",
     "client/",
     "server/",
-    "shared/"
+    "shared/",
+    "assets/"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
