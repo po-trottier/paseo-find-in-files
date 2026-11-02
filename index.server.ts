@@ -1,10 +1,10 @@
 import type { RpcOutput } from "@getpaseo/plugin";
 import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
-import { openEditor, readWorkspaceFile, resolveWorkspaceFile } from "./server/helpers";
+import { readWorkspaceFile } from "./server/helpers";
 import { IndexManager } from "./server/indexer";
 import { planQuery } from "./server/planner";
 import { verifyFiles } from "./server/verify";
-import { editorOpen, fileRead, indexRebuild, indexRelease, indexStatus, searchRun } from "./shared/contracts";
+import { fileRead, indexRebuild, indexRelease, indexStatus, searchRun, workspaceLocate } from "./shared/contracts";
 import { findSettings } from "./shared/settings";
 
 async function workspaceDirectory(paseo: PluginHandlerContext["paseo"], workspaceId: string): Promise<string> {
@@ -60,10 +60,10 @@ export default function contribute(server: PluginServerContext) {
   server.handle(fileRead, async ({ workspaceId, relativePath }, { paseo }) => {
     return readWorkspaceFile(await workspaceDirectory(paseo, workspaceId), relativePath);
   });
-  server.handle(editorOpen, async ({ workspaceId, relativePath, line, column }, { paseo }) => {
-    const file = await resolveWorkspaceFile(await workspaceDirectory(paseo, workspaceId), relativePath);
-    await openEditor(file.absolutePath, line, column);
-    return { opened: true as const };
+  server.handle(workspaceLocate, async ({ workspaceId }, { paseo }) => {
+    const workspace = await paseo.workspaces.ref(workspaceId).refresh();
+    if (!workspace?.workspaceDirectory) throw new Error(`Workspace ${workspaceId} is not active or has no available directory.`);
+    return { workspacePath: workspace.workspaceDirectory, projectId: workspace.projectId ?? null };
   });
   return async () => {
     for (const controller of searches.values()) controller.abort();

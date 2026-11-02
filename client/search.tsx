@@ -11,7 +11,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Platform, Pressable, Text, TextInput, View, type TextStyle } from "react-native";
 import { z } from "zod";
-import { editorOpen, indexRebuild, indexRelease, indexStatus, searchRun, type SearchMatch } from "../shared/contracts";
+import { indexRebuild, indexRelease, indexStatus, searchRun, type SearchMatch } from "../shared/contracts";
+import { type EditorTarget, TargetIcon, useEditorTargets } from "./editors";
 import { caseSensitiveIcon, regexIcon, wholeWordIcon } from "./icons";
 import { previewSpans } from "./highlight";
 import { withAlpha } from "./palette";
@@ -64,8 +65,12 @@ export function SearchPanel({
   const [searchId] = useState(() => `search-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
   const runSearch = useRpc(searchRun);
   const syntaxColors = useSyntaxColors(theme.colors.surface0);
-  const openEditor = useRpc(editorOpen);
-  const editor = useMutation({ mutationFn: openEditor });
+  const editors = useEditorTargets(workspaceId, host.id);
+  const editor = useMutation({
+    mutationFn: ({ relativePath, line, column }: { relativePath: string; line: number; column: number }) =>
+      editors.preferred ? editors.open(editors.preferred.id, relativePath, line, column) : Promise.reject(new Error("No editor is available.")),
+  });
+  const rowContext = useMemo(() => ({ syntaxColors, editor: editors.preferred }), [syntaxColors, editors.preferred]);
   const hostStatus = useHosts().find((item) => item.serverId === host.id)?.status;
   const disconnected = hostStatus !== undefined && hostStatus !== "online";
   const connection = useRef({ runSearch, disconnected });
@@ -488,7 +493,7 @@ export function SearchPanel({
         <FlatList
           style={{ flex: 1 }}
           data={rows}
-          extraData={syntaxColors}
+          extraData={rowContext}
           keyExtractor={(row) => row.key}
           keyboardShouldPersistTaps="handled"
           initialNumToRender={30}
@@ -525,9 +530,10 @@ export function SearchPanel({
               theme={theme}
               syntaxColors={syntaxColors}
               layout={layout}
+              editor={editors.preferred}
               disabled={editor.isPending}
               onPreview={() => onPreview(workspaceId, { relativePath: item.path, line: item.match.line, column: item.match.start + 1, endColumn: item.match.end + 1 })}
-              onEditor={() => editor.mutate({ workspaceId, relativePath: item.path, line: item.match.line, column: item.match.start + 1 })}
+              onEditor={() => editor.mutate({ relativePath: item.path, line: item.match.line, column: item.match.start + 1 })}
             />
           )}
         />
@@ -536,12 +542,13 @@ export function SearchPanel({
   );
 }
 
-function MatchRow({ path, match, theme, syntaxColors, layout, disabled, onPreview, onEditor }: {
+function MatchRow({ path, match, theme, syntaxColors, layout, editor, disabled, onPreview, onEditor }: {
   path: string;
   match: SearchMatch;
   theme: PluginWorkspacePanelProps["theme"];
   syntaxColors: SyntaxColors;
   layout: PluginWorkspacePanelProps["layout"];
+  editor: EditorTarget | null;
   disabled: boolean;
   onPreview(): void;
   onEditor(): void;
@@ -605,9 +612,10 @@ function MatchRow({ path, match, theme, syntaxColors, layout, disabled, onPrevie
           ))}
         </Text>
       </Pressable>
+      {editor && (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Open ${path} in VS Code, line ${match.line}, column ${match.start + 1}`}
+        accessibilityLabel={`Open ${path} in ${editor.label}, line ${match.line}, column ${match.start + 1}`}
         accessibilityState={{ disabled }}
         disabled={disabled}
         onFocus={() => setFocused(true)}
@@ -622,8 +630,9 @@ function MatchRow({ path, match, theme, syntaxColors, layout, disabled, onPrevie
           backgroundColor: pressed ? colors.surface2 : colors.surface0,
         })}
       >
-        <Icon name="ExternalLink" size={15} color={colors.foregroundMuted} />
+        <TargetIcon target={editor} color={colors.foregroundMuted} size={15} />
       </Pressable>
+      )}
     </View>
   );
 }

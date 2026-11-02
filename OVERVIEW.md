@@ -16,4 +16,4 @@ Search reads files on the daemon machine. Results and preview text go to the con
 
 The index has a memory limit. A partial index checks files that it does not contain directly. Results arrive together after the search, not as a stream.
 
-Open in VS Code uses the editor on the daemon machine. VS Code must be installed on that machine. Result clicks cannot open Paseo's own file tab yet. See [Paseo pull request #7318](https://github.com/getpaseo/paseo/pull/7318).
+The preview header has an editor button like the one in the Paseo workspace header. It opens the file at the match line and column in Cursor, VS Code, a JetBrains IDE, the file manager, or another editor that Paseo desktop finds. The button is available in Paseo desktop with a local daemon. Result clicks cannot open Paseo's own file tab yet. See [Paseo pull request #7318](https://github.com/getpaseo/paseo/pull/7318).

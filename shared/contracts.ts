@@ -66,13 +66,10 @@ export const fileRead = defineRpc({
   ]),
 });
 
-export const editorOpen = defineRpc({
-  name: "editor.open",
-  input: fileInputSchema.extend({
-    line: z.number().int().min(1).max(2147483647),
-    column: z.number().int().min(1).max(2147483647),
-  }),
-  output: z.object({ opened: z.literal(true) }),
+export const workspaceLocate = defineRpc({
+  name: "workspace.locate",
+  input: z.object({ workspaceId: z.string().min(1) }),
+  output: z.object({ workspacePath: z.string(), projectId: z.string().nullable() }),
 });
 
 export type SearchInput = z.infer<typeof searchInputSchema>;

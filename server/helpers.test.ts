@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, open, realpath, rm, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildEditorCommand, readWorkspaceFile, resolveWorkspaceFile } from "./helpers";
+import { readWorkspaceFile, resolveWorkspaceFile } from "./helpers";
 
 describe("search helpers", () => {
   it("contains canonical files and bounds text reads", async ({ skip }) => {
@@ -52,14 +52,5 @@ describe("search helpers", () => {
     } finally {
       await rm(sandbox, { recursive: true, force: true });
     }
-  });
-
-  it.each([
-    ["win32", "C:\\Users\\me\\é #%.txt", "explorer.exe", "vscode://file/C:/Users/me/%C3%A9%20%23%25.txt:12:4"],
-    ["darwin", "/Users/me/é #%.txt", "open", "vscode://file/Users/me/%C3%A9%20%23%25.txt:12:4"],
-    ["linux", "/home/me/é #%.txt", "xdg-open", "vscode://file/home/me/%C3%A9%20%23%25.txt:12:4"],
-    ["linux", "/home/me/a:b.txt", "xdg-open", "vscode://file/home/me/a%3Ab.txt:12:4"],
-  ] as const)("builds an encoded editor URL for %s without launching it", (platform, file, command, url) => {
-    expect(buildEditorCommand(file, 12, 4, platform)).toEqual({ command, args: [url], url });
   });
 });

@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
@@ -65,34 +64,4 @@ export async function readWorkspaceFile(directory: string, relativePath: string)
   } finally {
     await handle.close();
   }
-}
-
-export function buildEditorCommand(absolutePath: string, line: number, column: number, platform: NodeJS.Platform = process.platform): { command: string; args: string[]; url: string } {
-  if (!Number.isInteger(line) || line < 1 || line > 2147483647 || !Number.isInteger(column) || column < 1 || column > 2147483647) {
-    throw new Error("The editor line and column must be positive integers.");
-  }
-  const commands: Partial<Record<NodeJS.Platform, string>> = { win32: "explorer.exe", darwin: "open", linux: "xdg-open" };
-  const command = commands[platform];
-  if (!command) throw new Error(`The editor opener does not support ${platform}.`);
-  let filePath = absolutePath;
-  if (platform === "win32") {
-    filePath = filePath.replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
-    if (!/^(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+)/.test(filePath)) throw new Error("The editor file path must be absolute.");
-    filePath = filePath.replace(/\\/g, "/");
-  } else if (!path.posix.isAbsolute(filePath)) {
-    throw new Error("The editor file path must be absolute.");
-  }
-  const encoded = filePath.split("/").map((segment, index) => platform === "win32" && index === 0 && /^[A-Za-z]:$/.test(segment) ? segment : encodeURIComponent(segment)).join("/");
-  const url = `vscode://file${encoded.startsWith("/") ? "" : "/"}${encoded}:${line}:${column}`;
-  return { command, args: [url], url };
-}
-
-export async function openEditor(absolutePath: string, line: number, column: number): Promise<void> {
-  const { command, args } = buildEditorCommand(absolutePath, line, column);
-  const { promise, resolve, reject } = Promise.withResolvers<void>();
-  const child = spawn(command, args, { shell: false, windowsHide: true, stdio: "ignore" });
-  child.once("error", reject);
-  if (process.platform === "win32") child.once("spawn", () => resolve());
-  child.once("close", (code, signal) => code === 0 ? resolve() : reject(new Error(`The editor opener exited ${signal ? `with signal ${signal}` : `with code ${code}`}.`)));
-  await promise;
 }

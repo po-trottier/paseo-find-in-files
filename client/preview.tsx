@@ -1,11 +1,11 @@
 import { isSyntaxThemeId, resolveSyntaxColors, type HighlightToken } from "@getpaseo/highlight";
 import { type PluginWorkspacePanelProps, useRpc, useTabState } from "@getpaseo/plugin/client";
-import { Icon } from "@getpaseo/plugin/client/ui";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, Text, type TextStyle, View } from "react-native";
 import { z } from "zod";
-import { editorOpen, fileRead } from "../shared/contracts";
+import { fileRead } from "../shared/contracts";
+import { OpenInEditorButton, useEditorTargets } from "./editors";
 import { expandedOffset, highlightPreview, previewSpans, surfaceColorScheme } from "./highlight";
 import { withAlpha } from "./palette";
 import { readPaseoSyntaxTheme, subscribePaseoSyntaxTheme } from "./web";
@@ -48,7 +48,7 @@ export function createPreviewStore(): PreviewStore {
   };
 }
 
-export function PreviewPanel({ workspaceId, theme, layout, tab, revision, store }: PluginWorkspacePanelProps & { store: PreviewStore }) {
+export function PreviewPanel({ workspaceId, theme, layout, host, tab, revision, store }: PluginWorkspacePanelProps & { store: PreviewStore }) {
   const [state, setState] = useTabState(tab, previewStateSchema, defaultPreviewState);
   const readSelection = useCallback(() => store.read(workspaceId), [store, workspaceId]);
   const selection = useSyncExternalStore(store.subscribe, readSelection, readSelection);
@@ -72,47 +72,36 @@ export function PreviewPanel({ workspaceId, theme, layout, tab, revision, store 
     retry: false,
     gcTime: 0,
   });
-  const openEditor = useRpc(editorOpen);
-  const editor = useMutation({ mutationFn: openEditor });
-  useEffect(() => editor.reset(), [path]);
+  const editors = useEditorTargets(workspaceId, host.id);
+  const [editorError, setEditorError] = useState<string | null>(null);
+  useEffect(() => setEditorError(null), [path]);
   const colors = theme.colors;
   const padding = layout.compact ? 12 : 8;
   const targetSize = layout.compact ? 44 : 30;
 
   return (
     <View style={{ flex: 1, minHeight: 0, backgroundColor: colors.surface0 }}>
-      <View style={{ padding, gap: 6, borderBottomWidth: 1, borderColor: colors.border }}>
+      <View style={{ padding, gap: 6, borderBottomWidth: 1, borderColor: colors.border, zIndex: 10 }}>
         <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 12, rowGap: 6 }}>
-          <Text selectable numberOfLines={2} style={{ flexShrink: 1, flexGrow: 1, flexBasis: 200, minWidth: 0, color: colors.foreground, fontSize: 13 }}>{target?.relativePath ?? "Search preview"}</Text>
+          <View style={{ flexDirection: "row", alignItems: "baseline", flexShrink: 1, flexGrow: 1, flexBasis: 200, minWidth: 0, gap: 10 }}>
+            <Text selectable numberOfLines={2} style={{ flexShrink: 1, minWidth: 0, color: colors.foreground, fontSize: 13 }}>{target?.relativePath ?? "Search preview"}</Text>
+            {target && <Text style={{ flexShrink: 0, color: colors.foregroundMuted, fontSize: 12 }}>Line {target.line}, column {target.column}</Text>}
+          </View>
           {target && (
-          <View style={{ marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>Line {target.line}, column {target.column}</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Open in VS Code"
-              accessibilityState={{ disabled: editor.isPending }}
-              disabled={editor.isPending}
-              onPress={() => editor.mutate({ workspaceId, relativePath: target.relativePath, line: target.line, column: target.column })}
-              style={({ pressed }) => ({
-                minHeight: targetSize,
-                paddingHorizontal: 8,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-                borderRadius: 4,
-                borderWidth: 1,
-                borderColor: colors.border,
-                opacity: editor.isPending ? 0.5 : 1,
-                backgroundColor: pressed ? colors.surface2 : colors.surface1,
-              })}
-            >
-              <Icon name="ExternalLink" size={15} color={colors.foreground} />
-              <Text style={{ color: colors.foreground, fontSize: 12 }}>Open in VS Code</Text>
-            </Pressable>
+          <View style={{ marginLeft: "auto" }}>
+            <OpenInEditorButton
+              editors={editors}
+              theme={theme}
+              layout={layout}
+              relativePath={target.relativePath}
+              line={target.line}
+              column={target.column}
+              onError={(error) => setEditorError(error instanceof Error ? error.message : String(error))}
+            />
           </View>
           )}
         </View>
-        {editor.isError && <Text selectable style={{ color: colors.statusDanger, fontSize: 12 }}>{editor.error.message}</Text>}
+        {editorError && <Text selectable style={{ color: colors.statusDanger, fontSize: 12 }}>{editorError}</Text>}
       </View>
       {!target ? (
         <Text style={{ padding, color: colors.foregroundMuted, fontSize: 13 }}>Select a search result to preview the file.</Text>
@@ -134,9 +123,9 @@ export function PreviewPanel({ workspaceId, theme, layout, tab, revision, store 
           </Pressable>
         </View>
       ) : file.data.kind === "binary" ? (
-        <Text style={{ padding, color: colors.foregroundMuted, fontSize: 13 }}>This file is binary. Open it in VS Code.</Text>
+        <Text style={{ padding, color: colors.foregroundMuted, fontSize: 13 }}>This file is binary. Open it in an editor.</Text>
       ) : file.data.kind === "too-large" ? (
-        <Text style={{ padding, color: colors.foregroundMuted, fontSize: 13 }}>This file exceeds the {Math.round(file.data.maxBytes / 1024)} KiB preview limit. Open it in VS Code.</Text>
+        <Text style={{ padding, color: colors.foregroundMuted, fontSize: 13 }}>This file exceeds the {Math.round(file.data.maxBytes / 1024)} KiB preview limit. Open it in an editor.</Text>
       ) : (
         <FileLines
           key={`${workspaceId}:${path}`}
