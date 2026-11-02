@@ -23,7 +23,7 @@ export default function contribute(client: PluginClientContext) {
   }
   const removeSettings = client.addSettingsScreen({
     id: "preferences",
-    title: "Find in files",
+    title: "Settings",
     icon: "Search",
     Component: Settings,
   });
