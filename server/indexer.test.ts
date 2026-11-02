@@ -24,15 +24,23 @@ async function paths(directory: string): Promise<string[]> {
 
 function watchFixture() {
   const watcher = Object.assign(new EventEmitter(), { close: vi.fn(), unref: vi.fn() });
+  const listeners = new Map<string, WatchListener<string>>();
+  let first = true;
   let listener: WatchListener<string> | undefined;
-  const spy = vi.mocked(watchFileSystem).mockReset().mockImplementation(((_directory: PathLike, _options: unknown, callback: WatchListener<string>) => {
+  const spy = vi.mocked(watchFileSystem).mockReset().mockImplementation(((directory: PathLike, _options: unknown, callback: WatchListener<string>) => {
     listener = callback;
-    return watcher as unknown as FSWatcher;
+    listeners.set(path.resolve(String(directory)), callback);
+    if (first) { first = false; return watcher as unknown as FSWatcher; }
+    return Object.assign(new EventEmitter(), { close: vi.fn(), unref: vi.fn() }) as unknown as FSWatcher;
   }) as typeof watchFileSystem);
   return {
     watcher,
     spy,
-    change(relativePath: string, event: "rename" | "change" = "change") { listener!(event, relativePath); },
+    change(relativePath: string, event: "rename" | "change" = "change", directory?: string) {
+      const callback = directory ? listeners.get(path.resolve(directory)) : listener;
+      if (!callback) throw new Error("No watcher exists for this directory.");
+      callback(event, relativePath);
+    },
   };
 }
 
@@ -280,7 +288,7 @@ describe("workspace content index", () => {
     }
   });
 
-  it("rebuilds when a nested directory becomes a repository", async () => {
+  it("rebuilds when a nested directory becomes a worktree", async () => {
     const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-marker-"));
     const watch = watchFixture();
     const manager = new IndexManager();
@@ -290,8 +298,8 @@ describe("workspace content index", () => {
       const index = await manager.get(root);
       await vi.waitFor(() => expect(index.status().state).toBe("ready"), { timeout: 5000 });
       expect(await index.candidates(planQuery("nestedmarker", false))).toEqual(["nested/file.txt"]);
-      await files.writeFile(path.join(root, "nested", ".git"), "gitdir: ../metadata\n");
-      watch.change("nested/.git", "rename");
+      await files.writeFile(path.join(root, "nested", ".git"), "gitdir: ../.git/worktrees/nested\n");
+      watch.change("nested/.git", "rename", root);
       expect(index.status().state).toBe("stale");
       await vi.waitFor(async () => {
         expect(index.status().state).toBe("ready");
@@ -394,6 +402,341 @@ describe("workspace content index", () => {
       vi.unstubAllEnvs();
       watch.spy.mockRestore();
       await files.rm(cloud, { recursive: true, force: true });
+    }
+  });
+
+  it("shares one repository build with subdirectory scopes and keeps the root ignore rules", async () => {
+    const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-scopes-"));
+    const watch = watchFixture();
+    const manager = new IndexManager();
+    let opened: MockInstance<typeof files.opendir> | undefined;
+    try {
+      await files.mkdir(path.join(root, ".git"));
+      await files.mkdir(path.join(root, "src"));
+      await files.mkdir(path.join(root, "src-other"));
+      await files.writeFile(path.join(root, ".gitignore"), "*.ignored\n");
+      await files.writeFile(path.join(root, "root.txt"), "sharedneedle");
+      await files.writeFile(path.join(root, "src", "keep.txt"), "sharedneedle");
+      await files.writeFile(path.join(root, "src", "drop.ignored"), "sharedneedle");
+      await files.writeFile(path.join(root, "src-other", "other.txt"), "sharedneedle");
+      const nested = await manager.get(path.join(root, "src"), { leaseId: "nested" });
+      await vi.waitFor(() => expect(nested.status().state).toBe("ready"), { timeout: 5000 });
+      const whole = await manager.get(root, { leaseId: "root" });
+      expect(whole.status()).toMatchObject({ filesIndexed: 4, partial: false });
+      expect(nested.status().startedAt).toBe(whole.status().startedAt);
+      expect(nested.status().finishedAt).toBe(whole.status().finishedAt);
+      expect(watch.spy).toHaveBeenCalledTimes(1);
+      opened = vi.spyOn(files, "opendir");
+      expect(await nested.candidates(planQuery("sharedneedle", false))).toEqual(["keep.txt"]);
+      expect(await whole.candidates(planQuery("sharedneedle", false))).toEqual(["root.txt", "src-other/other.txt", "src/keep.txt"]);
+      expect(opened).not.toHaveBeenCalled();
+      if (process.platform === "win32") expect(await manager.get(root.toUpperCase())).toBe(whole);
+      manager.release("nested");
+      manager.release("root");
+    } finally {
+      opened?.mockRestore();
+      await manager.dispose();
+      watch.spy.mockRestore();
+      await files.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("unites repositories below a parent and reuses their units for another workspace", async () => {
+    const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-union-"));
+    const watch = watchFixture();
+    const manager = new IndexManager();
+    try {
+      for (const name of ["alpha", "beta", "ignored"]) {
+        await files.mkdir(path.join(root, name, ".git"), { recursive: true });
+        await files.writeFile(path.join(root, name, "keep.txt"), "unionneedle");
+        await files.writeFile(path.join(root, name, "drop.txt"), "unionneedle");
+        await files.writeFile(path.join(root, name, ".ignore"), "drop.txt\n");
+      }
+      await files.writeFile(path.join(root, ".ignore"), "ignored/\n");
+      await files.writeFile(path.join(root, "parent.txt"), "unionneedle");
+      const parent = await manager.get(root, { leaseId: "parent" });
+      await vi.waitFor(() => expect(parent.status().state).toBe("ready"), { timeout: 5000 });
+      expect(await parent.candidates(planQuery("unionneedle", false))).toEqual(["alpha/keep.txt", "beta/keep.txt", "parent.txt"]);
+      expect(parent.status()).toMatchObject({ filesIndexed: 6, partial: false });
+      expect(watch.spy).toHaveBeenCalledTimes(3);
+      const before = parent.status();
+      const alpha = await manager.get(path.join(root, "alpha"), { leaseId: "alpha" });
+      expect(alpha.status().state).toBe("ready");
+      expect(alpha.status().filesIndexed).toBe(2);
+      expect(await alpha.candidates(planQuery("unionneedle", false))).toEqual(["keep.txt"]);
+      expect(watch.spy).toHaveBeenCalledTimes(3);
+      expect(parent.status().startedAt).toBe(before.startedAt);
+      expect(parent.status().finishedAt).toBe(before.finishedAt);
+    } finally {
+      await manager.dispose();
+      watch.spy.mockRestore();
+      await files.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("includes submodules but excludes nested worktrees from parent scopes", async () => {
+    const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-unit-kinds-"));
+    const watch = watchFixture();
+    const manager = new IndexManager();
+    try {
+      await files.mkdir(path.join(root, ".git"));
+      for (const name of ["module", "tree", "independent"]) {
+        await files.mkdir(path.join(root, name));
+        await files.writeFile(path.join(root, name, "file.txt"), "kindneedle");
+      }
+      await files.writeFile(path.join(root, "module", ".git"), "gitdir: ../.git/worktrees/owner/modules/module\n");
+      await files.writeFile(path.join(root, "tree", ".git"), "gitdir: ../.git/worktrees/tree\n");
+      await files.mkdir(path.join(root, "independent", ".git"));
+      await files.writeFile(path.join(root, "file.txt"), "kindneedle");
+      const parent = await manager.get(root);
+      await vi.waitFor(() => expect(parent.status().state).toBe("ready"), { timeout: 5000 });
+      expect(await parent.candidates(planQuery("kindneedle", false))).toEqual(["file.txt", "independent/file.txt", "module/file.txt"]);
+      expect(watch.spy).toHaveBeenCalledTimes(3);
+      const tree = await manager.get(path.join(root, "tree"));
+      await vi.waitFor(() => expect(tree.status().state).toBe("ready"), { timeout: 5000 });
+      expect(await tree.candidates(planQuery("kindneedle", false))).toEqual(["file.txt"]);
+      expect(await parent.candidates(planQuery("kindneedle", false))).toEqual(["file.txt", "independent/file.txt", "module/file.txt"]);
+      expect(watch.spy).toHaveBeenCalledTimes(4);
+    } finally {
+      await manager.dispose();
+      watch.spy.mockRestore();
+      await files.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("drops parent watcher events below a child root and lets the child apply its own ignores", async () => {
+    const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-child-watch-"));
+    const child = path.join(root, "child");
+    const watch = watchFixture();
+    const manager = new IndexManager();
+    let opened: MockInstance<typeof files.open> | undefined;
+    try {
+      await files.mkdir(path.join(child, ".git"), { recursive: true });
+      await files.writeFile(path.join(root, "file.txt"), "parentneedle");
+      await files.writeFile(path.join(child, "file.txt"), "oldchildneedle");
+      const parent = await manager.get(root);
+      await vi.waitFor(() => expect(parent.status().state).toBe("ready"), { timeout: 5000 });
+      const childScope = await manager.get(child);
+      const parentFinished = parent.status().finishedAt;
+      opened = vi.spyOn(files, "open");
+      await files.writeFile(path.join(child, "file.txt"), "newchildneedle");
+      watch.change("child/file.txt", "change", root);
+      expect(await parent.candidates(planQuery("newchildneedle", false))).toEqual([]);
+      expect(parent.status().finishedAt).toBe(parentFinished);
+      expect(opened).not.toHaveBeenCalled();
+      watch.change("file.txt", "change", child);
+      await vi.waitFor(async () => {
+        expect(await parent.candidates(planQuery("newchildneedle", false))).toEqual(["child/file.txt"]);
+        expect(await childScope.candidates(planQuery("oldchildneedle", false))).toEqual([]);
+      }, { timeout: 5000 });
+      const childStarted = childScope.status().startedAt;
+      await files.writeFile(path.join(child, ".ignore"), "file.txt\n");
+      watch.change("child/.ignore", "change", root);
+      expect(childScope.status().startedAt).toBe(childStarted);
+      expect(parent.status().state).toBe("ready");
+      watch.change(".ignore", "change", child);
+      await vi.waitFor(async () => {
+        expect(childScope.status().state).toBe("ready");
+        expect(await parent.candidates(planQuery("newchildneedle", false))).toEqual([]);
+      }, { timeout: 5000 });
+      expect(watch.spy).toHaveBeenCalledTimes(2);
+    } finally {
+      opened?.mockRestore();
+      await manager.dispose();
+      watch.spy.mockRestore();
+      await files.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers home repositories only for queries or an explicit build and reuses built children", async () => {
+    const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-manual-union-"));
+    const home = vi.spyOn(os, "homedir").mockReturnValue(root);
+    const watch = watchFixture();
+    const manager = new IndexManager();
+    let opened: MockInstance<typeof files.open> | undefined;
+    let walked: MockInstance<typeof files.opendir> | undefined;
+    try {
+      for (const name of ["first", "second"]) {
+        await files.mkdir(path.join(root, name, ".git"), { recursive: true });
+        await files.writeFile(path.join(root, name, "file.txt"), "manualneedle");
+      }
+      await files.writeFile(path.join(root, "home.txt"), "manualneedle");
+      opened = vi.spyOn(files, "open");
+      walked = vi.spyOn(files, "opendir");
+      const scope = await manager.get(root, { leaseId: "home" });
+      expect(scope.status()).toMatchObject({ state: "manual", filesIndexed: 0, partial: false });
+      expect(opened).not.toHaveBeenCalled();
+      expect(walked).not.toHaveBeenCalled();
+      expect(watch.spy).not.toHaveBeenCalled();
+      expect(await scope.candidates(planQuery("manualneedle", false))).toEqual(["first/file.txt", "home.txt", "second/file.txt"]);
+      expect(scope.status().state).toBe("manual");
+      expect(watch.spy).not.toHaveBeenCalled();
+      const first = await manager.get(path.join(root, "first"));
+      await vi.waitFor(() => expect(first.status().state).toBe("ready"), { timeout: 5000 });
+      walked.mockClear();
+      expect(await scope.candidates(planQuery("manualneedle", false))).toEqual(["first/file.txt", "home.txt", "second/file.txt"]);
+      expect(walked.mock.calls.some(([directory]) => path.resolve(String(directory)) === path.join(root, "first"))).toBe(false);
+      expect(watch.spy).toHaveBeenCalledTimes(1);
+      await files.mkdir(path.join(root, "second", "nested", ".git"), { recursive: true });
+      await files.writeFile(path.join(root, "second", "nested", "file.txt"), "manualneedle");
+      scope.rebuild();
+      await vi.waitFor(() => expect(scope.status().state).toBe("ready"), { timeout: 5000 });
+      expect(scope.status()).toMatchObject({ filesIndexed: 4, partial: false });
+      expect(watch.spy).toHaveBeenCalledTimes(4);
+      expect(await scope.candidates(planQuery("manualneedle", false))).toEqual(["first/file.txt", "home.txt", "second/file.txt", "second/nested/file.txt"]);
+    } finally {
+      opened?.mockRestore();
+      walked?.mockRestore();
+      await manager.dispose();
+      watch.spy.mockRestore();
+      home.mockRestore();
+      await files.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps cloud scopes manual when their shared root is ready and indexes an explicit cloud prefix", async () => {
+    const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-cloud-scope-"));
+    const cloud = path.join(root, "Cloud");
+    const workspace = path.join(cloud, "project");
+    const watch = watchFixture();
+    const manager = new IndexManager();
+    let opened: MockInstance<typeof files.open> | undefined;
+    let walked: MockInstance<typeof files.opendir> | undefined;
+    vi.stubEnv("OneDrive", cloud);
+    vi.stubEnv("OneDriveCommercial", "");
+    vi.stubEnv("OneDriveConsumer", "");
+    try {
+      await files.mkdir(path.join(root, ".git"));
+      await files.mkdir(path.join(workspace, "child", ".git"), { recursive: true });
+      await files.mkdir(path.join(cloud, "other"));
+      await files.writeFile(path.join(root, ".gitignore"), "*.ignored\n");
+      await files.writeFile(path.join(root, "local.txt"), "cloudneedle");
+      await files.writeFile(path.join(workspace, "keep.txt"), "cloudneedle");
+      await files.writeFile(path.join(workspace, "drop.ignored"), "cloudneedle");
+      await files.writeFile(path.join(workspace, "child", "file.txt"), "cloudneedle");
+      await files.writeFile(path.join(cloud, "other", "secret.txt"), "cloudneedle");
+      opened = vi.spyOn(files, "open");
+      walked = vi.spyOn(files, "opendir");
+      const scope = await manager.get(workspace);
+      expect(scope.status().state).toBe("manual");
+      expect(opened).not.toHaveBeenCalled();
+      expect(walked).not.toHaveBeenCalled();
+      expect(watch.spy).not.toHaveBeenCalled();
+      const parent = await manager.get(root);
+      await vi.waitFor(() => expect(parent.status().state).toBe("ready"), { timeout: 5000 });
+      expect(scope.status().state).toBe("manual");
+      expect(await scope.candidates(planQuery("cloudneedle", false))).toEqual(["child/file.txt", "keep.txt"]);
+      expect(await parent.candidates(planQuery("cloudneedle", false))).toEqual(["local.txt"]);
+      scope.rebuild();
+      await vi.waitFor(() => expect(scope.status().state).toBe("ready"), { timeout: 5000 });
+      expect(await scope.candidates(planQuery("cloudneedle", false))).toEqual(["child/file.txt", "keep.txt"]);
+      expect(await parent.candidates(planQuery("cloudneedle", false))).toEqual(["local.txt"]);
+      expect(opened.mock.calls.some(([filename]) => String(filename).includes(`${path.sep}other${path.sep}`))).toBe(false);
+      expect(watch.spy).toHaveBeenCalledTimes(2);
+    } finally {
+      opened?.mockRestore();
+      walked?.mockRestore();
+      await manager.dispose();
+      watch.spy.mockRestore();
+      vi.unstubAllEnvs();
+      await files.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps leased units through LRU eviction and releases the previous scope when a lease moves", async () => {
+    const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-leases-"));
+    const watch = watchFixture();
+    const manager = new IndexManager();
+    try {
+      const directories: string[] = [];
+      for (let index = 0; index < 67; index++) {
+        const directory = path.join(root, String(index));
+        await files.mkdir(path.join(directory, ".git"), { recursive: true });
+        directories.push(directory);
+      }
+      const pinned = await manager.get(directories[0], { leaseId: "tab" });
+      await vi.waitFor(() => expect(pinned.status().state).toBe("ready"), { timeout: 5000 });
+      const finishedAt = pinned.status().finishedAt;
+      for (const directory of directories.slice(1, 65)) {
+        const scope = await manager.get(directory);
+        await vi.waitFor(() => expect(scope.status().state).toBe("ready"), { timeout: 5000, interval: 5 });
+      }
+      expect(watch.watcher.close).not.toHaveBeenCalled();
+      expect(pinned.status().finishedAt).toBe(finishedAt);
+      await manager.get(directories[64], { leaseId: "tab" });
+      const last = await manager.get(directories[65]);
+      await vi.waitFor(() => expect(last.status().state).toBe("ready"), { timeout: 5000 });
+      expect(watch.watcher.close).toHaveBeenCalledTimes(1);
+      manager.release("tab");
+      const released = await manager.get(directories[66], { leaseId: "temporary" });
+      await vi.waitFor(() => expect(released.status().state).toBe("ready"), { timeout: 5000 });
+      expect(last.status().state).toBe("ready");
+      manager.release("temporary");
+      expect(watch.spy).toHaveBeenCalledTimes(67);
+    } finally {
+      await manager.dispose();
+      watch.spy.mockRestore();
+      await files.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not automatically build a home repository for a subdirectory scope", async () => {
+    const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-home-repository-"));
+    const home = vi.spyOn(os, "homedir").mockReturnValue(root);
+    const watch = watchFixture();
+    const manager = new IndexManager();
+    let opened: MockInstance<typeof files.open> | undefined;
+    try {
+      await files.mkdir(path.join(root, ".git"));
+      await files.mkdir(path.join(root, "project"));
+      await files.writeFile(path.join(root, ".gitignore"), "*.ignored\n");
+      await files.writeFile(path.join(root, "outside.txt"), "homeneedle");
+      await files.writeFile(path.join(root, "project", "keep.txt"), "homeneedle");
+      await files.writeFile(path.join(root, "project", "drop.ignored"), "homeneedle");
+      opened = vi.spyOn(files, "open");
+      const scope = await manager.get(path.join(root, "project"));
+      expect(scope.status().state).toBe("manual");
+      expect(opened).not.toHaveBeenCalled();
+      expect(watch.spy).not.toHaveBeenCalled();
+      expect(await scope.candidates(planQuery("homeneedle", false))).toEqual(["keep.txt"]);
+      expect(watch.spy).not.toHaveBeenCalled();
+    } finally {
+      opened?.mockRestore();
+      await manager.dispose();
+      home.mockRestore();
+      watch.spy.mockRestore();
+      await files.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps unindexed files in scoped candidates when a shared unit is partial", async () => {
+    const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-partial-scope-"));
+    const watch = watchFixture();
+    const manager = new IndexManager();
+    const originalOpen = files.open;
+    let opened: MockInstance<typeof files.open> | undefined;
+    try {
+      await files.mkdir(path.join(root, ".git"));
+      await files.mkdir(path.join(root, "project"));
+      await files.writeFile(path.join(root, "outside.txt"), "partialneedle");
+      await files.writeFile(path.join(root, "project", "file.txt"), "partialneedle");
+      opened = vi.spyOn(files, "open").mockImplementation(async (...args) => {
+        if (String(args[0]) === path.join(root, "project", "file.txt")) {
+          throw Object.assign(new Error("The file is temporarily unavailable."), { code: "EACCES" });
+        }
+        return originalOpen(...args);
+      });
+      const scope = await manager.get(path.join(root, "project"));
+      await vi.waitFor(() => expect(scope.status().state).toBe("ready"), { timeout: 5000 });
+      expect(scope.status()).toMatchObject({ filesIndexed: 1, partial: true });
+      opened.mockRestore();
+      expect(await scope.candidates(planQuery("partialneedle", false))).toEqual(["file.txt"]);
+      expect(watch.spy).toHaveBeenCalledTimes(1);
+    } finally {
+      opened?.mockRestore();
+      await manager.dispose();
+      watch.spy.mockRestore();
+      await files.rm(root, { recursive: true, force: true });
     }
   });
 });

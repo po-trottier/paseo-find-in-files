@@ -4,7 +4,7 @@ import { openEditor, readWorkspaceFile, resolveWorkspaceFile } from "./server/he
 import { IndexManager } from "./server/indexer";
 import { planQuery } from "./server/planner";
 import { verifyFiles } from "./server/verify";
-import { editorOpen, fileRead, indexRebuild, indexStatus, searchRun } from "./shared/contracts";
+import { editorOpen, fileRead, indexRebuild, indexRelease, indexStatus, searchRun } from "./shared/contracts";
 import { findSettings } from "./shared/settings";
 
 async function workspaceDirectory(paseo: PluginHandlerContext["paseo"], workspaceId: string): Promise<string> {
@@ -21,9 +21,13 @@ export default function contribute(server: PluginServerContext) {
   server.registerSettings(findSettings);
   const searches = new Map<string, AbortController>();
   const indexes = new IndexManager();
-  server.handle(indexStatus, async ({ workspaceId }, { paseo }) => {
+  server.handle(indexStatus, async ({ workspaceId, leaseId }, { paseo }) => {
     const directory = await workspaceDirectory(paseo, workspaceId);
-    return (await indexes.get(directory)).status();
+    return (await indexes.get(directory, { leaseId })).status();
+  });
+  server.handle(indexRelease, ({ leaseId }) => {
+    indexes.release(leaseId);
+    return { released: true as const };
   });
   server.handle(indexRebuild, async ({ workspaceId }, { paseo }) => {
     const index = await indexes.get(await workspaceDirectory(paseo, workspaceId));

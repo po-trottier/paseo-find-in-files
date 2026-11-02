@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View, type TextStyle } from "react-native";
 import { z } from "zod";
-import { editorOpen, indexRebuild, indexStatus, searchRun, type SearchMatch } from "../shared/contracts";
+import { editorOpen, indexRebuild, indexRelease, indexStatus, searchRun, type SearchMatch } from "../shared/contracts";
 import { caseSensitiveIcon, regexIcon, wholeWordIcon } from "./icons";
 import { expandTabs, expandedOffset } from "./highlight";
 import { withAlpha } from "./palette";
@@ -68,6 +68,17 @@ export function SearchPanel({
   const connection = useRef({ runSearch, disconnected });
   connection.current = { runSearch, disconnected };
   const readIndex = useRpc(indexStatus);
+  const releaseIndex = useRpc(indexRelease);
+  const leaseSequence = useRef(0);
+  useEffect(() => {
+    if (disconnected) return;
+    const leaseId = `${searchId}-${++leaseSequence.current}`;
+    const pin = readIndex({ workspaceId, leaseId });
+    void pin.catch(() => {});
+    return () => {
+      void pin.then(() => releaseIndex({ leaseId }), () => undefined).catch(() => {});
+    };
+  }, [workspaceId, searchId, disconnected, readIndex, releaseIndex]);
   const rebuildIndex = useRpc(indexRebuild);
   const queryClient = useQueryClient();
   const index = useQuery({

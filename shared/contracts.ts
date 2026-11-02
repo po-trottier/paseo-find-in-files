@@ -33,8 +33,14 @@ export const searchRun = defineRpc({
 
 export const indexStatus = defineRpc({
   name: "index.status",
-  input: z.object({ workspaceId: z.string().min(1) }),
+  input: z.object({ workspaceId: z.string().min(1), leaseId: z.string().min(1).max(200).optional() }),
   output: indexStatusSchema,
+});
+
+export const indexRelease = defineRpc({
+  name: "index.release",
+  input: z.object({ leaseId: z.string().min(1).max(200) }),
+  output: z.object({ released: z.literal(true) }),
 });
 
 export const indexRebuild = defineRpc({
