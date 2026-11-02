@@ -9,7 +9,7 @@ import {
 import { Icon } from "@getpaseo/plugin/client/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View, type TextStyle } from "react-native";
+import { ActivityIndicator, FlatList, Platform, Pressable, Text, TextInput, View, type TextStyle } from "react-native";
 import { z } from "zod";
 import { editorOpen, indexRebuild, indexRelease, indexStatus, searchRun, type SearchMatch } from "../shared/contracts";
 import { caseSensitiveIcon, regexIcon, wholeWordIcon } from "./icons";
@@ -17,6 +17,7 @@ import { previewSpans } from "./highlight";
 import { withAlpha } from "./palette";
 import { type PreviewTarget, useSyntaxColors } from "./preview";
 
+const codeFont = { fontSize: 12, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" } as const;
 const searchStateSchema = z.object({
   query: z.string().max(8192),
   caseSensitive: z.boolean(),
@@ -589,14 +590,15 @@ function MatchRow({ path, match, theme, syntaxColors, layout, disabled, onPrevie
         })}
       >
         <Text style={{ minWidth: 26, textAlign: "right", color: colors.foregroundMuted, fontSize: 11 }}>{match.line}</Text>
-        <Text numberOfLines={1} style={[{ flex: 1, color: colors.foreground, fontSize: 12, fontFamily: "monospace" }, whitespace]}>
-          {match.textStart > 0 && <Text style={{ color: colors.foregroundMuted }}>…</Text>}
+        <Text numberOfLines={1} style={[codeFont, { flex: 1, color: colors.foreground }, whitespace]}>
+          {match.textStart > 0 && <Text style={[codeFont, { color: colors.foregroundMuted }]}>…</Text>}
           {spans.map((span, index) => (
             <Text
               key={index}
-              style={span.matched
+              // React Native Web does not pass the font of a parent Text to a nested Text.
+              style={[codeFont, span.matched
                 ? { color: colors.foreground, backgroundColor: withAlpha(colors.accent, "40") }
-                : { color: span.style ? syntaxColors[span.style] : colors.foreground }}
+                : { color: span.style ? syntaxColors[span.style] : colors.foreground }]}
             >
               {span.text}
             </Text>

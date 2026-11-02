@@ -244,9 +244,10 @@ function FileLines({ content, target, token, revision, theme, layout }: {
                 } : undefined).map((span, spanIndex) => (
                   <Text
                     key={spanIndex}
-                    style={span.matched
+                    // React Native Web does not pass the font of a parent Text to a nested Text.
+                    style={[{ fontFamily, fontSize }, span.matched
                       ? { color: colors.foreground, backgroundColor: withAlpha(colors.accent, "60") }
-                      : { color: span.style ? syntaxColors[span.style] : colors.foreground }}
+                      : { color: span.style ? syntaxColors[span.style] : colors.foreground }]}
                   >
                     {span.text}
                   </Text>
