@@ -143,7 +143,7 @@ export function OpenInEditorButton({ editors, theme, layout, relativePath, line,
               key={target.id}
               accessibilityRole="menuitem"
               accessibilityState={{ checked: target.id === preferred.id }}
-              onPress={() => { setMenu(false); editors.choose(target.id); open(target.id); }}
+              onPress={() => { setMenu(false); editors.choose(target.id); }}
               style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => ({
                 minHeight: layout.compact ? 44 : 30,
                 paddingHorizontal: 10,
