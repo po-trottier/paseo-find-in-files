@@ -12,11 +12,11 @@ type EditorBridge = {
   openTarget(input: OpenTargetInput): Promise<void>;
 };
 declare const window: {
-  paseoDesktop?: { editor?: Partial<EditorBridge> };
+  paseoDesktop?: { editor?: Partial<EditorBridge>; invoke?(command: string, args?: unknown): Promise<unknown> };
   localStorage?: { getItem(key: string): string | null; setItem(key: string, value: string): void };
 };
 
-// ponytail: Paseo's desktop editor bridge and its preferred-editor keys are internal. Replace them when the plugin API exposes editor targets.
+// ponytail: Paseo's desktop editor bridge, `desktop_daemon_status` command, and preferred-editor keys are internal. Replace them when the plugin API exposes editor targets.
 function editorBridge(): EditorBridge | null {
   if (Platform.OS !== "web" || typeof window === "undefined") return null;
   const editor = window.paseoDesktop?.editor;
@@ -57,9 +57,22 @@ export function useEditorTargets(workspaceId: string, serverId: string): EditorT
   const bridge = editorBridge();
   const locate = useRpc(workspaceLocate);
   const chosen = useSyncExternalStore(subscribeChosen, readChosen, readChosen);
+  // Paseo shows editors only for the daemon that the desktop app runs. A remote workspace path means nothing here.
+  const localDaemon = useQuery({
+    queryKey: ["find-in-files", "local-daemon"],
+    enabled: bridge !== null,
+    staleTime: Infinity,
+    retry: false,
+    queryFn: async () => {
+      const status: unknown = await window.paseoDesktop?.invoke?.("desktop_daemon_status");
+      const id = status && typeof status === "object" && "serverId" in status && typeof status.serverId === "string" ? status.serverId.trim() : "";
+      return id || null;
+    },
+  });
+  const local = bridge !== null && localDaemon.data === serverId.trim();
   const query = useQuery({
     queryKey: ["find-in-files", "editors", serverId, workspaceId],
-    enabled: bridge !== null,
+    enabled: local,
     staleTime: 60_000,
     retry: false,
     queryFn: async () => {
@@ -67,7 +80,7 @@ export function useEditorTargets(workspaceId: string, serverId: string): EditorT
       return { ...workspace, targets: await bridge!.listTargets({ workspacePath: workspace.workspacePath }) };
     },
   });
-  const data = query.data;
+  const data = local ? query.data : undefined;
   const targets = data?.targets ?? [];
   const preferredId = [
     chosen,

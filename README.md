@@ -8,7 +8,7 @@ Search workspace content from the Search tab beside Files and Changes in Paseo's
 
 Paseo desktop and daemon 0.14.0 or later are required. Search uses Node inside the plugin. No external search program or setup step is required.
 
-The editor buttons require Paseo desktop with a local daemon. Web and mobile clients do not show them. The daemon supports Windows, macOS, and Linux. The client uses React Native controls and supports compact layouts.
+The editor buttons require Paseo desktop with its local daemon. Web and mobile clients, and remote daemons, do not show them. The daemon supports Windows, macOS, and Linux. The client uses React Native controls and supports compact layouts.
 
 ## Install
 
@@ -39,9 +39,28 @@ The status row shows index progress, completion time, and errors. Counts cover a
 
 Automatic indexing stays off for the user's home directory, file system roots, and folders inside OneDrive. Select **Build index** to start it explicitly. Searches in these folders reuse available indexes and scan other files directly. A restored query stays paused until you press Enter or edit it.
 
-Results appear below collapsible file headers. Select a match to reuse the read-only preview tab. The preview header shows the file, line, and column, and an editor button at the right. Select the button to open the file at that line and column in the preferred editor. Select the arrow to choose another editor from the list that Paseo shows in its own workspace header. The result rows also have a button for the preferred editor.
+Results appear below collapsible file headers. Select a match to reuse the preview tab. The preview header shows the file, line, and column, and an editor button at the right. Select the button to open the file at that line and column in the preferred editor. Select the arrow to choose another editor from the list that Paseo shows in its own workspace header. The result rows also have a button for the preferred editor.
 
 Preview keeps indentation and expands tabs to four-column stops. It colors syntax with the same engine as Paseo. The selected line and query match remain marked. Syntax uses at most 768 KiB of source and a 200 ms work budget. Larger files and lines with more than 256 syntax tokens remain plain text.
+
+### Add to context
+
+Select code in the preview in one of two ways:
+
+- Select a line number. Shift-click or long-press another line number to select a range. Select the line number again to clear it.
+- Drag over the code text. This works on desktop and web.
+
+A floating **Add to context** button appears below the selection. The plugin settings choose what it does:
+
+| Setting | Result |
+| --- | --- |
+| Attachment (default) | Adds the selection to the composer. Select **Add attachment** > **Attach Find in Files selection** in any composer on that host, then pick it. |
+| Copy | Copies the path, line range, and a fenced code block to the clipboard. |
+| Both | Does both. |
+
+### Edit
+
+Select **Edit** in the preview header to change the file in a plain text box. Syntax colors do not show while you edit. Select **Save** to write the file, or **Cancel** to discard the changes. Save keeps the file's line endings and byte order mark. If the file changed on disk after the edit started, the preview shows **Overwrite** and **Discard and reload**. While you edit, a new search result does not replace the editor.
 
 Query options and the preview target remain in tab state after a reload. The plugin settings screen controls the search shortcut. The preview uses the syntax theme from Paseo Settings > Appearance. The plugin reads it from Paseo's internal `@paseo:app-settings` storage on desktop and web, and checks it again each second. Native clients use Paseo's default theme (`one`).
 
@@ -77,11 +96,15 @@ Each search returns at most 2,000 matches and limits the result data size. Narro
 
 The truncation notice also appears if a file changes during its read or the plugin cannot read a candidate file.
 
-Preview actions reject paths outside the workspace, including symbolic link escapes. Search results and preview text go to the connected Paseo client. The plugin does not send them to an agent provider.
+Preview, edit, and add-to-context actions reject paths outside the workspace, including symbolic link escapes. Search results and preview text go to the connected Paseo client. An agent receives a selection only when you attach it to a message.
 
 Result clicks cannot open Paseo's own file tab yet. The plugin uses its preview tab until [Paseo #7318](https://github.com/getpaseo/paseo/pull/7318) provides that API.
 
-The editor list comes from Paseo desktop's internal editor bridge. The plugin also reads Paseo's internal `@paseo:preferred-editor` storage keys. A choice in the plugin menu is kept in the plugin's own `find-in-files:preferred-editor` key and does not change Paseo's choice. Paseo launches the editor on the client machine, so the daemon must run on the same machine.
+The editor list comes from Paseo desktop's internal editor bridge. The plugin also reads Paseo's internal `@paseo:preferred-editor` storage keys. A choice in the plugin menu is kept in the plugin's own `find-in-files:preferred-editor` key and does not change Paseo's choice. Paseo launches the editor on the client machine. The plugin asks Paseo desktop for its local daemon ID with the internal `desktop_daemon_status` command and shows editor buttons only for that daemon, as Paseo does.
+
+Attachment selections stay in daemon memory, newest first, at most 50. A daemon or plugin restart clears them. An attached selection is a text snapshot of the code at the time you added it.
+
+Edit mode saves through the daemon with the same workspace containment checks as preview. Save compares a SHA-256 hash of the file with the hash from when the edit started. The check and the write are not atomic, so a change in that short interval is overwritten. Closing the preview tab discards unsaved edits.
 
 ## Development checks
 
@@ -92,7 +115,7 @@ paseo plugin ls
 paseo plugin logs find-in-files
 ```
 
-Tests cover query plans, ignore rules, shared repository units, file size limits, match offsets, and containment. They also cover Python syntax tokens, tabs, shortcut chords, and workspace routes. Tests do not launch an editor.
+Tests cover query plans, ignore rules, shared repository units, file size limits, match offsets, and containment. They also cover edit writes, stale-version conflicts, Python syntax tokens, tabs, shortcut chords, and workspace routes. Tests do not launch an editor.
 
 Paseo contracts: [plugin reference](https://paseo.sh/docs/plugins/reference).
 

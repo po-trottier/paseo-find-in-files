@@ -1,8 +1,8 @@
-import { mkdtemp, mkdir, open, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, open, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readWorkspaceFile, resolveWorkspaceFile } from "./helpers";
+import { readWorkspaceFile, resolveWorkspaceFile, writeWorkspaceFile } from "./helpers";
 
 describe("search helpers", () => {
   it("contains canonical files and bounds text reads", async ({ skip }) => {
@@ -15,9 +15,9 @@ describe("search helpers", () => {
       await writeFile(path.join(root, "nested", "text.txt"), "é😀\n");
       await writeFile(path.join(outside, "secret.txt"), "outside");
       expect(await resolveWorkspaceFile(root, "nested/text.txt")).toEqual({ absolutePath: await realpath(path.join(root, "nested", "text.txt")), relativePath: "nested/text.txt" });
-      expect(await readWorkspaceFile(root, "nested/text.txt")).toEqual({ kind: "text", path: "nested/text.txt", content: "é😀\n" });
+      expect(await readWorkspaceFile(root, "nested/text.txt")).toMatchObject({ kind: "text", path: "nested/text.txt", content: "é😀\n" });
       await writeFile(path.join(root, "nested", "bom.txt"), "\ufefffirst line");
-      expect(await readWorkspaceFile(root, "nested/bom.txt")).toEqual({ kind: "text", path: "nested/bom.txt", content: "first line" });
+      expect(await readWorkspaceFile(root, "nested/bom.txt")).toMatchObject({ kind: "text", path: "nested/bom.txt", content: "first line" });
       for (const input of ["../outside/secret.txt", "nested/../text.txt", "..\\outside\\secret.txt", path.join(root, "nested", "text.txt"), "/absolute.txt", "C:\\absolute.txt", "C:relative.txt", "\\\\server\\share\\file.txt"]) {
         await expect(resolveWorkspaceFile(root, input)).rejects.toThrow("inside the workspace");
       }
@@ -51,6 +51,26 @@ describe("search helpers", () => {
       expect((await resolveWorkspaceFile(path.join(sandbox, "root-link"), "nested/text.txt")).relativePath).toBe("nested/text.txt");
     } finally {
       await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("writes edits, keeps a byte order mark, and refuses stale versions", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-find-write-"));
+    try {
+      await writeFile(path.join(root, "bom.txt"), "\ufeffold\r\n");
+      const read = await readWorkspaceFile(root, "bom.txt");
+      if (read.kind !== "text") throw new Error("expected text");
+      const saved = await writeWorkspaceFile(root, "bom.txt", "new\r\n", read.version);
+      expect(saved.kind).toBe("saved");
+      expect(await readFile(path.join(root, "bom.txt"))).toEqual(Buffer.from("\ufeffnew\r\n"));
+      expect(await writeWorkspaceFile(root, "bom.txt", "stale", read.version)).toEqual({ kind: "conflict" });
+      expect(await readFile(path.join(root, "bom.txt"), "utf8")).toBe("\ufeffnew\r\n");
+      expect((await writeWorkspaceFile(root, "bom.txt", "forced", read.version, true)).kind).toBe("saved");
+      expect(await readFile(path.join(root, "bom.txt"), "utf8")).toBe("\ufeffforced");
+      await expect(writeWorkspaceFile(root, "../escape.txt", "x", read.version, true)).rejects.toThrow("inside the workspace");
+      await expect(writeWorkspaceFile(root, "missing.txt", "x", read.version, true)).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 });

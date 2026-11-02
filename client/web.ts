@@ -24,10 +24,72 @@ declare const window: {
   setInterval(handler: () => void, ms: number): number;
   clearInterval(id: number): void;
 };
+type SelectionNode = { nodeType: number; parentElement: SelectionElement | null };
+type SelectionElement = SelectionNode & {
+  closest(selector: string): SelectionElement | null;
+  querySelector(selector: string): SelectionElement | null;
+  getAttribute(name: string): string | null;
+  contains(node: SelectionNode | null): boolean;
+  getBoundingClientRect(): { top: number; bottom: number };
+};
+type PageSelection = {
+  isCollapsed: boolean;
+  rangeCount: number;
+  anchorNode: SelectionNode | null;
+  anchorOffset: number;
+  focusNode: SelectionNode | null;
+  focusOffset: number;
+  getRangeAt(index: number): { getBoundingClientRect(): { bottom: number } };
+};
+type PageRange = { setStart(node: SelectionNode, offset: number): void; setEnd(node: SelectionNode, offset: number): void; toString(): string };
 declare const document: {
   activeElement: WebElement | null;
   querySelector(selector: string): WebElement | null;
+  getSelection(): PageSelection | null;
+  createRange(): PageRange;
+  addEventListener(type: "selectionchange", listener: () => void): void;
+  removeEventListener(type: "selectionchange", listener: () => void): void;
 };
+
+/** A point in the preview: a 1-based line and a character offset in its displayed text. */
+export type TextPoint = { line: number; offset: number };
+/** A text selection in the preview. `top` is the selection bottom, in pixels below the preview top. */
+export type TextPick = { start: TextPoint; end: TextPoint; top: number };
+
+/**
+ * Reports the page text selection when it lies inside `root`, a React Native Web view. Rows carry
+ * `data-line`, and their code text carries `data-code`. Native platforms never report.
+ */
+export function watchTextSelection(root: unknown, onChange: (pick: TextPick | null) => void): () => void {
+  if (Platform.OS !== "web" || typeof document === "undefined" || !root) return () => {};
+  // On web a React Native View ref is its DOM element.
+  const element = root as SelectionElement;
+  const pointOf = (node: SelectionNode | null, offset: number): TextPoint | null => {
+    const row = (node?.nodeType === 1 ? node as SelectionElement : node?.parentElement)?.closest("[data-line]");
+    const code = row?.querySelector("[data-code]");
+    if (!node || !row || !code) return null;
+    const line = Number(row.getAttribute("data-line"));
+    // A point in the line number counts as the start of the line.
+    if (!code.contains(node)) return { line, offset: 0 };
+    const range = document.createRange();
+    range.setStart(code, 0);
+    range.setEnd(node, offset);
+    return { line, offset: range.toString().length };
+  };
+  const update = () => {
+    const selection = document.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount || !element.contains(selection.anchorNode) || !element.contains(selection.focusNode)) return onChange(null);
+    const anchor = pointOf(selection.anchorNode, selection.anchorOffset);
+    const focus = pointOf(selection.focusNode, selection.focusOffset);
+    if (!anchor || !focus) return onChange(null);
+    const [start, end] = anchor.line < focus.line || (anchor.line === focus.line && anchor.offset <= focus.offset) ? [anchor, focus] : [focus, anchor];
+    if (start.line === end.line && start.offset === end.offset) return onChange(null);
+    const top = selection.getRangeAt(0).getBoundingClientRect().bottom - element.getBoundingClientRect().top;
+    onChange({ start, end, top });
+  };
+  document.addEventListener("selectionchange", update);
+  return () => document.removeEventListener("selectionchange", update);
+}
 
 export interface SearchShortcutController {
   capture(onCapture: (shortcut: string) => void, onCancel: () => void): void;

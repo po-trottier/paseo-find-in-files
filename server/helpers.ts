@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { open, realpath, stat } from "node:fs/promises";
+import { open, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { MAX_FILE_BYTES } from "./files";
@@ -8,7 +9,7 @@ const utf8 = new TextDecoder("utf-8", { fatal: true });
 
 export type ResolvedWorkspaceFile = { absolutePath: string; relativePath: string };
 export type WorkspaceFile =
-  | { kind: "text"; path: string; content: string }
+  | { kind: "text"; path: string; content: string; version: string }
   | { kind: "binary"; path: string }
   | { kind: "too-large"; path: string; maxBytes: number };
 
@@ -57,11 +58,32 @@ export async function readWorkspaceFile(directory: string, relativePath: string)
     const bytes = buffer.subarray(0, size);
     if (bytes.includes(0)) return { kind: "binary", path: file.relativePath };
     try {
-      return { kind: "text", path: file.relativePath, content: utf8.decode(bytes) };
+      return { kind: "text", path: file.relativePath, content: utf8.decode(bytes), version: fileVersion(bytes) };
     } catch {
       return { kind: "binary", path: file.relativePath };
     }
   } finally {
     await handle.close();
   }
+}
+
+function fileVersion(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
+
+/**
+ * Replaces the text of an existing workspace file. Returns a conflict when the bytes on disk no longer
+ * match `baseVersion`, unless `force` is set. A byte order mark on the old file is kept.
+ */
+export async function writeWorkspaceFile(directory: string, relativePath: string, content: string, baseVersion: string, force = false): Promise<{ kind: "saved"; version: string } | { kind: "conflict" }> {
+  const file = await resolveWorkspaceFile(directory, relativePath);
+  // ponytail: the version check and the write are not atomic. A change in between is overwritten.
+  const current = await readFile(file.absolutePath);
+  if (!force && fileVersion(current) !== baseVersion) return { kind: "conflict" };
+  const bytes = Buffer.concat([current.subarray(0, 3).equals(BOM) ? BOM : Buffer.alloc(0), Buffer.from(content, "utf8")]);
+  if (bytes.length > MAX_FILE_BYTES) throw new Error(`The file exceeds the ${MAX_FILE_BYTES / 1024} KiB edit limit.`);
+  await writeFile(file.absolutePath, bytes);
+  return { kind: "saved", version: fileVersion(bytes) };
 }

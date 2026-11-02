@@ -2,7 +2,7 @@ import { type PluginSurfaceProps, useSettings } from "@getpaseo/plugin/client";
 import { ScrollView, SettingsCard, SettingsRow, SettingsSection } from "@getpaseo/plugin/client/ui";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { findDefaults, findSettings } from "../shared/settings";
+import { addToContextModes, findDefaults, findSettings } from "../shared/settings";
 import type { SearchShortcutController } from "./web";
 
 export function FindSettings({ theme, layout, shortcut }: PluginSurfaceProps & { shortcut: SearchShortcutController }) {
@@ -88,6 +88,28 @@ export function FindSettings({ theme, layout, shortcut }: PluginSurfaceProps & {
               >
                 <Text style={{ color: colors.foreground }}>Clear</Text>
               </Pressable>
+            </View>
+          </SettingsRow>
+          <SettingsRow
+            label="Add to context"
+            hint="Attachment adds the selection to the composer's Find in Files selection picker. Copy puts it on the clipboard as a path, line range, and code block."
+          >
+            <View accessibilityRole="radiogroup" style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {addToContextModes.map((mode) => {
+                const checked = values.addToContext === mode;
+                return (
+                  <Pressable
+                    key={mode}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked, disabled }}
+                    disabled={disabled}
+                    onPress={() => save({ addToContext: mode })}
+                    style={{ ...buttonStyle, borderColor: checked ? colors.accent : colors.border, opacity: disabled ? 0.5 : 1 }}
+                  >
+                    <Text style={{ color: checked ? colors.accent : colors.foreground }}>{{ attachment: "Attachment", copy: "Copy", both: "Both" }[mode]}</Text>
+                  </Pressable>
+                );
+              })}
             </View>
           </SettingsRow>
         </SettingsCard>

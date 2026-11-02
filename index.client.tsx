@@ -4,6 +4,7 @@ import type { PreviewTarget } from "./client/preview";
 import { SearchPanel } from "./client/search";
 import { FindSettings } from "./client/settings";
 import { registerSearchShortcut } from "./client/web";
+import { snippetSource } from "./shared/contracts";
 
 export default function contribute(client: PluginClientContext) {
   const preview = createPreviewStore();
@@ -41,6 +42,7 @@ export default function contribute(client: PluginClientContext) {
     locations: ["workspace"],
     Component: Preview,
   });
+  const removeSnippets = client.addAttachmentSource(snippetSource);
   const removeCommand = client.addCommandCenterItem({
     id: "find-in-files",
     title: "Find in files",
@@ -52,6 +54,7 @@ export default function contribute(client: PluginClientContext) {
     },
   });
   return async () => {
+    removeSnippets();
     removeCommand();
     removeSearch();
     removePreview();
