@@ -30,5 +30,9 @@
     "typescript": "^5.9.3",
     "vitest": "^5.1.0",
     "zod": "^4.4.3"
+  },
+  "dependencies": {
+    "ignore": "^7.0.14",
+    "minimatch": "10.2.5"
   }
 }

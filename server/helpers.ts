@@ -2,235 +2,24 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import type { Readable } from "node:stream";
 import { TextDecoder } from "node:util";
-import type { SearchEvent, SearchInput, SearchMatch } from "../shared/contracts";
+import { MAX_FILE_BYTES } from "./files";
 
-const MAX_MATCHES = 2000;
-const MAX_JSON_BYTES = 1024 * 1024;
-const MAX_LINE_BYTES = 16 * 1024;
-const MAX_RESULT_BYTES = 2 * 1024 * 1024;
-const MAX_BATCH_CHARS = 64 * 1024;
-const MAX_BATCH_MATCHES = 64;
-const MAX_FILE_BYTES = 2 * 1024 * 1024;
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = new TextDecoder("utf-8", { fatal: true });
 
-export type ParsedRgLine = { path: string; matches: SearchMatch[]; truncated: boolean };
 export type ResolvedWorkspaceFile = { absolutePath: string; relativePath: string };
 export type WorkspaceFile =
   | { kind: "text"; path: string; content: string }
   | { kind: "binary"; path: string }
   | { kind: "too-large"; path: string; maxBytes: number };
 
-function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Invalid ripgrep JSON object.");
-  }
-  return value as Record<string, unknown>;
-}
-
-function rgBytes(value: unknown, field: string): Buffer {
-  const data = object(value);
-  if (typeof data.text === "string") return Buffer.from(data.text, "utf8");
-  if (typeof data.bytes === "string" && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data.bytes)) {
-    return Buffer.from(data.bytes, "base64");
-  }
-  throw new Error(`Invalid ripgrep ${field} field.`);
-}
-
 function assertRelativePath(relativePath: string): void {
-  const segments = relativePath.split(/[\\/]/);
-  if (!relativePath || /[\x00-\x1f\x7f]/.test(relativePath) || path.isAbsolute(relativePath) || path.win32.isAbsolute(relativePath) || /^[A-Za-z]:/.test(relativePath) || segments.includes("..")) {
+  const segments = relativePath.split(process.platform === "win32" ? /[\\/]/ : "/");
+  if (!relativePath || /[\x00-\x1f\x7f]/.test(relativePath) || path.isAbsolute(relativePath) || path.win32.isAbsolute(relativePath) || /^[A-Za-z]:/.test(relativePath) || relativePath.split(/[\\/]/).includes("..")) {
     throw new Error("The file path must stay inside the workspace.");
   }
   if (process.platform === "win32" && segments.some((segment) => /[<>:"|?*]|[. ]$/.test(segment) || /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:[. ]|$)/i.test(segment))) {
     throw new Error("The file path uses unsafe Windows syntax.");
-  }
-}
-
-export function parseRgLine(jsonLine: string): ParsedRgLine | null {
-  if (Buffer.byteLength(jsonLine, "utf8") > MAX_JSON_BYTES) {
-    throw new Error("The ripgrep JSON record exceeds the 1 MiB limit.");
-  }
-  let message: Record<string, unknown>;
-  try {
-    message = object(JSON.parse(jsonLine));
-  } catch (error) {
-    throw new Error(`Invalid ripgrep JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (typeof message.type !== "string") throw new Error("The ripgrep JSON record has no type.");
-  if (message.type !== "match") return null;
-  const data = object(message.data);
-  const pathBytes = rgBytes(data.path, "path");
-  if (pathBytes.length > 32768) throw new Error("The ripgrep file path is too long.");
-  let filePath: string;
-  try {
-    filePath = utf8.decode(pathBytes);
-  } catch {
-    throw new Error("ripgrep returned a file path that is not valid UTF-8.");
-  }
-  if (process.platform === "win32") filePath = filePath.replace(/\\/g, "/");
-  filePath = filePath.replace(/^\.\//, "");
-  assertRelativePath(filePath);
-  if (!Number.isSafeInteger(data.line_number) || (data.line_number as number) < 1 || !Array.isArray(data.submatches)) {
-    throw new Error("Invalid ripgrep match location.");
-  }
-  const bytes = rgBytes(data.lines, "lines");
-  if (bytes.length > MAX_LINE_BYTES || bytes.includes(0)) return { path: filePath, matches: [], truncated: true };
-  const text = bytes.toString("utf8").replace(/\r?\n$/, "");
-  const matches: SearchMatch[] = [];
-  for (let index = 0; index < Math.min(data.submatches.length, MAX_MATCHES); index++) {
-    const value = data.submatches[index];
-    const match = object(value);
-    const start = match.start;
-    const end = match.end;
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || (start as number) < 0 || (end as number) < (start as number) || (end as number) > bytes.length) {
-      throw new Error("Invalid ripgrep byte offsets.");
-    }
-    // ponytail: each offset scans at most 16 KiB. Use a byte map if this limit grows.
-    matches.push({
-      line: data.line_number as number,
-      text,
-      start: Math.min(text.length, bytes.subarray(0, start as number).toString("utf8").length),
-      end: Math.min(text.length, bytes.subarray(0, end as number).toString("utf8").length),
-    });
-  }
-  return { path: filePath, matches, truncated: data.submatches.length > MAX_MATCHES };
-}
-
-async function* rgLines(stream: Readable): AsyncGenerator<string | null> {
-  let parts: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of stream as AsyncIterable<Buffer>) {
-    let start = 0;
-    while (start < chunk.length) {
-      const newline = chunk.indexOf(10, start);
-      const end = newline < 0 ? chunk.length : newline;
-      size += end - start;
-      if (size > MAX_JSON_BYTES) {
-        yield null;
-        return;
-      }
-      if (end > start) parts.push(chunk.subarray(start, end));
-      if (newline < 0) break;
-      const line = Buffer.concat(parts, size).toString("utf8");
-      parts = [];
-      size = 0;
-      if (line) yield line;
-      start = newline + 1;
-    }
-  }
-  if (size) yield Buffer.concat(parts, size).toString("utf8");
-}
-
-export async function runSearch(
-  directory: string,
-  input: SearchInput,
-  signal: AbortSignal,
-  push: (event: SearchEvent) => Promise<void>,
-): Promise<void> {
-  if (signal.aborted) return;
-  if (!input.query) {
-    await push({ type: "done", totalMatches: 0, totalFiles: 0, truncated: false });
-    return;
-  }
-  try {
-    const root = await realpath(directory);
-    if (!(await stat(root)).isDirectory()) throw new Error("The workspace directory is not a directory.");
-    if (signal.aborted) return;
-    const args = ["--no-config", "--json", "--line-number", input.caseSensitive ? "--case-sensitive" : "--ignore-case", "--max-columns", "300", "--max-columns-preview"];
-    if (!input.regex) args.push("--fixed-strings");
-    if (input.wholeWord) args.push("--word-regexp");
-    const include = input.include?.trim();
-    const exclude = input.exclude?.trim();
-    if (include) args.push("--glob", include);
-    if (exclude) args.push("--glob", `!${exclude}`);
-    args.push("--", input.query, ".");
-    const { promise: closed, resolve: resolveClosed } = Promise.withResolvers<{ code: number | null; signal: NodeJS.Signals | null }>();
-    const child = spawn("rg", args, { cwd: root, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    let processError: Error | undefined;
-    let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => { stderr += chunk.slice(0, Math.max(0, 8192 - stderr.length)); });
-    child.once("error", (error) => { processError = error; });
-    child.once("close", (code, exitSignal) => resolveClosed({ code, signal: exitSignal }));
-    const stop = () => {
-      if (!child.killed && child.exitCode === null && child.signalCode === null) child.kill();
-      child.stdout.destroy();
-    };
-    child.stderr.on("error", (error) => { processError = error; stop(); });
-    signal.addEventListener("abort", stop, { once: true });
-    if (signal.aborted) stop();
-    let totalMatches = 0;
-    let totalResultSize = 0;
-    const files = new Set<string>();
-    let truncated = false;
-    let capped = false;
-    let pendingPath = "";
-    let pending: SearchMatch[] = [];
-    let pendingChars = 0;
-    const flush = async () => {
-      if (pending.length && !signal.aborted) await push({ type: "matches", path: pendingPath, matches: pending });
-      pending = [];
-      pendingChars = 0;
-    };
-    let failure: unknown;
-    let exit: { code: number | null; signal: NodeJS.Signals | null };
-    try {
-      records: for await (const line of rgLines(child.stdout)) {
-        if (signal.aborted) break;
-        if (line === null) {
-          truncated = capped = true;
-          stop();
-          break;
-        }
-        const parsed = parseRgLine(line);
-        if (!parsed) continue;
-        truncated ||= parsed.truncated;
-        const rowSize = Buffer.byteLength(parsed.path, "utf8") + Buffer.byteLength(parsed.matches[0]?.text ?? "", "utf8") + 128;
-        for (const match of parsed.matches) {
-          if (signal.aborted) break records;
-          if (totalResultSize + rowSize > MAX_RESULT_BYTES) {
-            truncated = capped = true;
-            stop();
-            break records;
-          }
-          if (pendingPath !== parsed.path || pending.length >= MAX_BATCH_MATCHES || pendingChars + match.text.length > MAX_BATCH_CHARS) await flush();
-          if (signal.aborted) break records;
-          pendingPath = parsed.path;
-          pending.push(match);
-          pendingChars += match.text.length;
-          totalResultSize += rowSize;
-          totalMatches++;
-          files.add(parsed.path);
-          if (totalMatches >= MAX_MATCHES) {
-            truncated = capped = true;
-            stop();
-            break records;
-          }
-        }
-      }
-    } catch (error) {
-      if (!signal.aborted && !capped) failure = error;
-      stop();
-    } finally {
-      if (signal.aborted || capped) stop();
-      exit = await closed;
-      signal.removeEventListener("abort", stop);
-    }
-    if (signal.aborted) return;
-    if (processError) {
-      if ((processError as NodeJS.ErrnoException).code === "ENOENT") throw new Error("ripgrep (rg) was not found on the daemon PATH.");
-      throw new Error(`ripgrep failed: ${processError.message}`);
-    }
-    if (failure) throw failure;
-    if (exit.code !== 0 && exit.code !== 1 && !(capped && child.killed && exit.signal)) {
-      throw new Error(stderr.trim() || `ripgrep exited ${exit.signal ? `with signal ${exit.signal}` : `with code ${exit.code}`}.`);
-    }
-    await flush();
-    if (!signal.aborted) await push({ type: "done", totalMatches, totalFiles: files.size, truncated });
-  } catch (error) {
-    if (!signal.aborted) await push({ type: "error", message: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -249,6 +38,8 @@ export async function resolveWorkspaceFile(directory: string, relativePath: stri
 
 export async function readWorkspaceFile(directory: string, relativePath: string): Promise<WorkspaceFile> {
   const file = await resolveWorkspaceFile(directory, relativePath);
+  const beforeOpen = await stat(file.absolutePath);
+  if (beforeOpen.size > MAX_FILE_BYTES) return { kind: "too-large", path: file.relativePath, maxBytes: MAX_FILE_BYTES };
   const handle = await open(file.absolutePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   try {
     const info = await handle.stat();

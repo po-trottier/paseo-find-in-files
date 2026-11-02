@@ -1,7 +1,10 @@
 import type { RpcOutput } from "@getpaseo/plugin";
 import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
-import { openEditor, readWorkspaceFile, resolveWorkspaceFile, runSearch } from "./server/helpers";
-import { editorOpen, fileRead, searchRun } from "./shared/contracts";
+import { openEditor, readWorkspaceFile, resolveWorkspaceFile } from "./server/helpers";
+import { IndexManager } from "./server/indexer";
+import { planQuery } from "./server/planner";
+import { verifyFiles } from "./server/verify";
+import { editorOpen, fileRead, indexRebuild, indexStatus, searchRun } from "./shared/contracts";
 
 async function workspaceDirectory(paseo: PluginHandlerContext["paseo"], workspaceId: string): Promise<string> {
   const workspace = await paseo.workspaces.ref(workspaceId).refresh();
@@ -9,42 +12,40 @@ async function workspaceDirectory(paseo: PluginHandlerContext["paseo"], workspac
   return workspace.workspaceDirectory;
 }
 
+function emptySearch(): RpcOutput<typeof searchRun> {
+  return { files: [], totalMatches: 0, totalFiles: 0, truncated: false, index: { state: "idle", files: 0, partial: false } };
+}
+
 export default function contribute(server: PluginServerContext) {
   const searches = new Map<string, AbortController>();
+  const indexes = new IndexManager();
+  server.handle(indexStatus, async ({ workspaceId }, { paseo }) => {
+    const directory = await workspaceDirectory(paseo, workspaceId);
+    return (await indexes.get(directory)).status();
+  });
+  server.handle(indexRebuild, async ({ workspaceId }, { paseo }) => {
+    const index = await indexes.get(await workspaceDirectory(paseo, workspaceId));
+    index.rebuild();
+    return index.status();
+  });
   server.handle(searchRun, async (input, { paseo }) => {
     searches.get(input.searchId)?.abort();
     const controller = new AbortController();
     searches.set(input.searchId, controller);
-    const result: RpcOutput<typeof searchRun> = { files: [], totalMatches: 0, totalFiles: 0, truncated: false };
     try {
-      if (!input.query) return result;
+      if (!input.query) return emptySearch();
       const directory = await workspaceDirectory(paseo, input.workspaceId);
-      if (controller.signal.aborted) return result;
-      const files = new Map<string, (typeof result.files)[number]>();
-      let error: string | undefined;
-      await runSearch(directory, input, controller.signal, async (event) => {
-        if (controller.signal.aborted) return;
-        if (event.type === "error") {
-          error = event.message;
-        } else if (event.type === "done") {
-          result.totalMatches = event.totalMatches;
-          result.totalFiles = event.totalFiles;
-          result.truncated = event.truncated;
-        } else {
-          let file = files.get(event.path);
-          if (!file) {
-            file = { path: event.path, matches: [] };
-            files.set(event.path, file);
-            result.files.push(file);
-          }
-          file.matches.push(...event.matches);
-        }
-      });
-      if (controller.signal.aborted) return { files: [], totalMatches: 0, totalFiles: 0, truncated: false };
-      if (error) throw new Error(error);
-      return result;
+      if (controller.signal.aborted) return emptySearch();
+      const index = await indexes.get(directory);
+      if (controller.signal.aborted) return emptySearch();
+      const status = index.status();
+      const candidates = await index.candidates(planQuery(input.query, input.regex, input.caseSensitive), controller.signal);
+      if (controller.signal.aborted) return emptySearch();
+      const result = await verifyFiles(directory, candidates, input, controller.signal);
+      if (controller.signal.aborted) return emptySearch();
+      return { ...result, index: { state: status.state, files: status.filesIndexed, partial: status.partial } };
     } catch (error) {
-      if (controller.signal.aborted) return { files: [], totalMatches: 0, totalFiles: 0, truncated: false };
+      if (controller.signal.aborted) return emptySearch();
       throw error;
     } finally {
       if (searches.get(input.searchId) === controller) searches.delete(input.searchId);
@@ -58,8 +59,9 @@ export default function contribute(server: PluginServerContext) {
     await openEditor(file.absolutePath, line, column);
     return { opened: true as const };
   });
-  return () => {
+  return async () => {
     for (const controller of searches.values()) controller.abort();
     searches.clear();
+    await indexes.dispose();
   };
 }

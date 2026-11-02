@@ -1,5 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { indexStateSchema, indexStatusSchema } from "./index";
 
 export const searchInputSchema = z.object({
   workspaceId: z.string().min(1),
@@ -26,7 +27,20 @@ export const searchRun = defineRpc({
     totalMatches: z.number().int().nonnegative(),
     totalFiles: z.number().int().nonnegative(),
     truncated: z.boolean(),
+    index: z.object({ state: indexStateSchema, files: z.number().int().nonnegative(), partial: z.boolean() }),
   }),
+});
+
+export const indexStatus = defineRpc({
+  name: "index.status",
+  input: z.object({ workspaceId: z.string().min(1) }),
+  output: indexStatusSchema,
+});
+
+export const indexRebuild = defineRpc({
+  name: "index.rebuild",
+  input: z.object({ workspaceId: z.string().min(1) }),
+  output: indexStatusSchema,
 });
 
 const fileInputSchema = z.object({
@@ -54,8 +68,4 @@ export const editorOpen = defineRpc({
 });
 
 export type SearchInput = z.infer<typeof searchInputSchema>;
-export type SearchEvent =
-  | { type: "matches"; path: string; matches: SearchMatch[] }
-  | { type: "done"; totalMatches: number; totalFiles: number; truncated: boolean }
-  | { type: "error"; message: string };
 export type SearchMatch = z.infer<typeof matchSchema>;

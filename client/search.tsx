@@ -6,11 +6,12 @@ import {
   useTabState,
 } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/ui";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View, type TextStyle } from "react-native";
 import { z } from "zod";
-import { editorOpen, searchRun, type SearchMatch } from "../shared/contracts";
+import { editorOpen, indexRebuild, indexStatus, searchRun, type SearchMatch } from "../shared/contracts";
+import { caseSensitiveIcon, regexIcon, wholeWordIcon } from "./icons";
 import { withAlpha } from "./palette";
 import type { PreviewTarget } from "./preview";
 
@@ -35,7 +36,7 @@ const defaultSearchState: z.infer< typeof searchStateSchema> = {
 type SearchState = z.infer< typeof searchStateSchema>;
 type SearchResults = RpcOutput< typeof searchRun>;
 type SearchStatus =
-  | { status: "idle" | "waiting" | "searching" }
+  | { status: "idle" | "checking-index" | "paused" | "waiting" | "searching" }
   | { status: "done"; data: SearchResults }
   | { status: "error"; message: string };
 type ResultRow =
@@ -63,14 +64,57 @@ export function SearchPanel({
   const editor = useMutation({ mutationFn: openEditor });
   const hostStatus = useHosts().find((item) => item.serverId === host.id)?.status;
   const disconnected = hostStatus !== undefined && hostStatus !== "online";
+  const connection = useRef({ runSearch, disconnected });
+  connection.current = { runSearch, disconnected };
+  const readIndex = useRpc(indexStatus);
+  const rebuildIndex = useRpc(indexRebuild);
+  const queryClient = useQueryClient();
+  const index = useQuery({
+    queryKey: ["find-in-files", "index", workspaceId],
+    queryFn: () => readIndex({ workspaceId }),
+    enabled: !disconnected,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: (query) => query.state.data?.state === "building" ? 1000 : false,
+  });
+  const initialIndex = useRef< { workspaceId: string; manual: boolean } | null>(null);
+  if (index.data && initialIndex.current?.workspaceId !== workspaceId) {
+    initialIndex.current = { workspaceId, manual: index.data.state === "manual" };
+  }
+  const initialIndexReady = initialIndex.current?.workspaceId === workspaceId;
+  const initialManualIndex = initialIndexReady && initialIndex.current?.manual === true;
+  const initialIndexError = !initialIndexReady && index.isError;
+  const authorizedWorkspace = useRef< string | null>(null);
+  const rebuildErrorIndexUpdate = useRef(0);
+  const rebuild = useMutation({
+    mutationFn: rebuildIndex,
+    retry: false,
+    onError: () => { rebuildErrorIndexUpdate.current = index.dataUpdatedAt; },
+    onMutate: ({ workspaceId: rebuildWorkspaceId }) => queryClient.cancelQueries({
+      queryKey: ["find-in-files", "index", rebuildWorkspaceId],
+      exact: true,
+    }),
+    onSuccess: (data, { workspaceId: rebuildWorkspaceId }) => {
+      const queryKey = ["find-in-files", "index", rebuildWorkspaceId];
+      queryClient.setQueryData(queryKey, data);
+      void queryClient.invalidateQueries({ queryKey, exact: true });
+    },
+  });
+  useEffect(() => {
+    if (rebuild.isError && index.dataUpdatedAt !== rebuildErrorIndexUpdate.current) rebuild.reset();
+  }, [index.dataUpdatedAt, rebuild.isError, rebuild.reset]);
   const queryInput = useRef<TextInput>(null);
   const sequence = useRef(0);
   const timer = useRef<NodeJS.Timeout | number>(0);
+  const pendingSearch = useRef< (() => void) | null>(null);
   const cancellations = useRef<Promise< void>>(Promise.resolve());
   const activeSearch = useRef(false);
   const [search, setSearch] = useState<SearchStatus>({ status: "idle" });
   const [retry, setRetry] = useState(0);
   const [collapsed, setCollapsed] = useState<Set< string>>(() => new Set());
+  const [queryFocused, setQueryFocused] = useState(false);
+  const [filterFocused, setFilterFocused] = useState< "include" | "exclude" | null>(null);
   const input = useMemo(() => ({
     workspaceId,
     searchId,
@@ -86,9 +130,10 @@ export function SearchPanel({
     sequence.current += 1;
     clearTimeout(timer.current);
     timer.current = 0;
+    pendingSearch.current = null;
     if (!activeSearch.current) return;
     activeSearch.current = false;
-    const cancellation = runSearch({
+    const cancellation = connection.current.runSearch({
       workspaceId,
       searchId,
       query: "",
@@ -97,7 +142,7 @@ export function SearchPanel({
       regex: false,
     }).then(() => undefined, () => undefined);
     cancellations.current = Promise.all([cancellations.current, cancellation]).then(() => undefined);
-  }, [runSearch, workspaceId, searchId]);
+  }, [workspaceId, searchId]);
 
   useEffect(() => queryInput.current?.focus(), [revision]);
   useEffect(() => {
@@ -107,19 +152,32 @@ export function SearchPanel({
       setSearch({ status: "idle" });
       return cancel;
     }
-    if (disconnected) {
-      setSearch({ status: "error", message: "Host is disconnected. Search resumes after connection." });
+    if (connection.current.disconnected) {
+      setSearch({ status: "error", message: "Host is disconnected. Connect the host, then select Retry." });
       return cancel;
     }
-    setSearch({ status: "waiting" });
-    timer.current = setTimeout(() => {
+    if (!initialIndexReady) {
+      setSearch(initialIndexError
+        ? { status: "error", message: "Index status is unavailable. Select Retry before search." }
+        : { status: "checking-index" });
+      return cancel;
+    }
+    const execute = () => {
+      if (pendingSearch.current !== execute) return;
+      authorizedWorkspace.current = workspaceId;
+      clearTimeout(timer.current);
       timer.current = 0;
+      pendingSearch.current = null;
       void cancellations.current.then(async () => {
         if (current !== sequence.current) return;
+        if (connection.current.disconnected) {
+          setSearch({ status: "error", message: "Host is disconnected. Connect the host, then select Retry." });
+          return;
+        }
         setSearch({ status: "searching" });
         activeSearch.current = true;
         try {
-          const data = await runSearch(input);
+          const data = await connection.current.runSearch(input);
           if (current === sequence.current) setSearch({ status: "done", data });
         } catch (error) {
           if (current === sequence.current) {
@@ -132,13 +190,27 @@ export function SearchPanel({
           if (current === sequence.current) activeSearch.current = false;
         }
       });
-    }, 250);
+    };
+    pendingSearch.current = execute;
+    if (initialManualIndex && authorizedWorkspace.current !== workspaceId) {
+      setSearch({ status: "paused" });
+    } else {
+      setSearch({ status: "waiting" });
+      timer.current = setTimeout(execute, 250);
+    }
     return cancel;
-  }, [input, runSearch, cancel, disconnected, retry, revision]);
+  }, [input, cancel, retry, initialIndexReady, initialManualIndex, initialIndexError]);
+
+  useEffect(() => {
+    if (!disconnected || (!timer.current && !activeSearch.current)) return;
+    cancel();
+    setSearch({ status: "error", message: "Host is disconnected. Connect the host, then select Retry." });
+  }, [disconnected, cancel]);
 
   function update(patch: Partial<SearchState>) {
     if (Object.entries(patch).every(([key, value]) => stateRef.current[key as keyof SearchState] === value)) return;
     const next = { ...stateRef.current, ...patch };
+    authorizedWorkspace.current = workspaceId;
     cancel();
     editor.reset();
     stateRef.current = next;
@@ -164,8 +236,11 @@ export function SearchPanel({
     return result;
   }, [search, collapsed]);
   const targetSize = layout.compact ? 44 : 30;
+  const toggleSize = layout.compact ? 36 : 22;
   const padding = layout.compact ? 12 : 8;
   const colors = theme.colors;
+  // React Native Web accepts "none". Native TextStyle omits this web value.
+  const noOutline = layout.platform === "web" ? { outlineStyle: "none", outlineWidth: 0 } as unknown as TextStyle : null;
   const inputStyle = {
     minHeight: targetSize,
     minWidth: 0,
@@ -177,33 +252,77 @@ export function SearchPanel({
     borderWidth: 1,
     borderRadius: 4,
     fontSize: 13,
+    ...noOutline,
   };
+  const indexBusy = rebuild.isPending || index.data?.state === "building";
+  const manualIndex = index.data?.state === "manual";
+  const indexMessage = rebuild.isPending
+    ? "Rebuilding index…"
+    : rebuild.isError
+      ? `Index rebuild failed: ${rebuild.error.message}`
+      : index.isError
+        ? `Index status unavailable: ${index.error.message}`
+        : !index.data
+          ? disconnected ? "Index unavailable while the host is disconnected." : "Checking index…"
+          : manualIndex
+            ? "Indexing is off for this folder because it is large."
+            : index.data.state === "building"
+              ? `Indexing… ${index.data.filesIndexed.toLocaleString()} files${index.data.partial ? " · partial index" : ""}`
+              : index.data.state === "ready"
+                ? `Indexed ${index.data.filesIndexed.toLocaleString()} files · ${(index.data.durationMs / 1000).toFixed(1)} s${index.data.partial ? ` · partial (${index.data.filesSkipped.toLocaleString()} files skipped)` : ""}`
+                : index.data.state === "error"
+                  ? `Index error: ${index.data.error ?? "Rebuild the index."}`
+                  : index.data.state === "stale" ? `Index is stale · direct scan${index.data.error ? `: ${index.data.error}` : ""}` : "Index is idle · direct scan";
 
   return (
     <View style={{ flex: 1, minHeight: 0, backgroundColor: colors.surface0 }}>
-      <View style={{ padding, gap: layout.compact ? 8 : 6 }}>
-        <TextInput
-          ref={queryInput}
-          autoFocus
-          accessibilityLabel="Find in files"
-          placeholder="Search workspace"
-          placeholderTextColor={colors.foregroundMuted}
-          selectionColor={colors.accent}
-          value={state.query}
-          maxLength={8192}
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="search"
-          onChangeText={(query) => update({ query })}
-          onSubmitEditing={() => { cancel(); setRetry((value) => value + 1); }}
-          style={inputStyle}
-        />
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+      <View style={{ padding, gap: 4 }}>
+        <View
+          style={{
+            minHeight: targetSize,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 2,
+            paddingRight: 3,
+            backgroundColor: colors.surface1,
+            borderWidth: 1,
+            borderRadius: 4,
+            borderColor: queryFocused ? colors.accent : colors.border,
+          }}
+        >
+          <TextInput
+            ref={queryInput}
+            autoFocus
+            accessibilityLabel="Find in files"
+            placeholder="Search"
+            placeholderTextColor={colors.foregroundMuted}
+            selectionColor={colors.accent}
+            value={state.query}
+            maxLength={8192}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            blurOnSubmit={false}
+            onFocus={() => setQueryFocused(true)}
+            onBlur={() => setQueryFocused(false)}
+            onChangeText={(query) => update({ query })}
+            onSubmitEditing={() => pendingSearch.current?.()}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              alignSelf: "stretch",
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              color: colors.foreground,
+              fontSize: 13,
+              ...noOutline,
+            }}
+          />
           {([
-            ["caseSensitive", "CaseSensitive", "Match case"],
-            ["wholeWord", "WholeWord", "Match whole word"],
-            ["regex", "Regex", "Use regular expression"],
-          ] as const).map(([key, icon, label]) => (
+            ["caseSensitive", caseSensitiveIcon, "Match case"],
+            ["wholeWord", wholeWordIcon, "Match whole word"],
+            ["regex", regexIcon, "Use regular expression"],
+          ] as const).map(([key, svg, label]) => (
             <Pressable
               key={key}
               accessibilityRole="checkbox"
@@ -211,38 +330,66 @@ export function SearchPanel({
               accessibilityState={{ checked: state[key] }}
               onPress={() => update({ [key]: !stateRef.current[key] })}
               style={({ pressed }) => ({
-                width: targetSize,
-                height: targetSize,
+                width: toggleSize,
+                height: toggleSize,
                 alignItems: "center",
                 justifyContent: "center",
                 borderWidth: 1,
-                borderRadius: 4,
-                borderColor: state[key] ? colors.accent : colors.border,
-                backgroundColor: state[key] ? withAlpha(colors.accent, "24") : pressed ? colors.surface2 : colors.surface0,
+                borderRadius: 3,
+                borderColor: state[key] ? colors.accent : "transparent",
+                backgroundColor: state[key] ? withAlpha(colors.accent, "33") : pressed ? colors.surface2 : "transparent",
               })}
             >
-              <Icon name={icon} size={17} color={state[key] ? colors.accent : colors.foregroundMuted} />
+              <Icon icon={{ svg }} size={16} color={state[key] ? colors.foreground : colors.foregroundMuted} />
             </Pressable>
           ))}
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          {indexBusy && <ActivityIndicator size="small" color={colors.accent} />}
+          <Text
+            accessibilityLiveRegion="polite"
+            numberOfLines={2}
+            style={{ flex: 1, color: index.isError || rebuild.isError || index.data?.state === "error" ? colors.statusDanger : colors.foregroundMuted, fontSize: 11 }}
+          >
+            {indexMessage}
+          </Text>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="File filters"
+            accessibilityLabel={manualIndex ? "Build index" : "Rebuild index"}
+            accessibilityState={{ disabled: disconnected || indexBusy, busy: indexBusy }}
+            disabled={disconnected || indexBusy}
+            onPress={() => rebuild.mutate({ workspaceId })}
+            style={({ pressed }) => ({
+              minWidth: targetSize,
+              paddingHorizontal: manualIndex ? 8 : 0,
+              flexDirection: "row",
+              gap: 5,
+              height: targetSize,
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 3,
+              opacity: disconnected || indexBusy ? 0.5 : 1,
+              backgroundColor: pressed ? colors.surface2 : "transparent",
+            })}
+          >
+            <Icon name="RefreshCw" size={14} color={colors.foregroundMuted} />
+            {manualIndex && <Text style={{ color: colors.foreground, fontSize: 11 }}>Build index</Text>}
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Toggle file filters"
             accessibilityState={{ expanded: state.filtersOpen }}
             onPress={() => setState({ ...stateRef.current, filtersOpen: !stateRef.current.filtersOpen })}
             style={({ pressed }) => ({
-              flex: 1,
-              minHeight: targetSize,
-              flexDirection: "row",
+              width: toggleSize,
+              height: toggleSize,
               alignItems: "center",
-              justifyContent: "flex-end",
-              gap: 4,
-              paddingHorizontal: 4,
-              borderRadius: 4,
-              backgroundColor: pressed ? colors.surface2 : colors.surface0,
+              justifyContent: "center",
+              borderRadius: 3,
+              backgroundColor: state.filtersOpen || pressed ? colors.surface2 : "transparent",
             })}
           >
-            <Icon name={state.filtersOpen ? "ChevronDown" : "ChevronRight"} size={14} color={colors.foregroundMuted} />
-            <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>Files</Text>
+            <Icon name="Ellipsis" size={16} color={state.filtersOpen ? colors.foreground : colors.foregroundMuted} />
           </Pressable>
         </View>
         {state.filtersOpen && (
@@ -258,7 +405,9 @@ export function SearchPanel({
               autoCapitalize="none"
               autoCorrect={false}
               onChangeText={(include) => update({ include })}
-              style={inputStyle}
+              onFocus={() => setFilterFocused("include")}
+              onBlur={() => setFilterFocused(null)}
+              style={[inputStyle, { borderColor: filterFocused === "include" ? colors.accent : colors.border }]}
             />
             <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>Files to exclude</Text>
             <TextInput
@@ -271,7 +420,9 @@ export function SearchPanel({
               autoCapitalize="none"
               autoCorrect={false}
               onChangeText={(exclude) => update({ exclude })}
-              style={inputStyle}
+              onFocus={() => setFilterFocused("exclude")}
+              onBlur={() => setFilterFocused(null)}
+              style={[inputStyle, { borderColor: filterFocused === "exclude" ? colors.accent : colors.border }]}
             />
             <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>Use one glob per field. Leave a field empty to omit it.</Text>
           </View>
@@ -280,6 +431,8 @@ export function SearchPanel({
       <View style={{ flex: 1, minHeight: 0, borderTopWidth: 1, borderColor: colors.border }}>
         <View style={{ padding, gap: 6 }} accessibilityLiveRegion="polite">
           {search.status === "idle" && <Text style={{ color: colors.foregroundMuted, fontSize: 13 }}>Enter text to search this workspace.</Text>}
+          {search.status === "checking-index" && <Text style={{ color: colors.foregroundMuted, fontSize: 13 }}>Search waits for the index status.</Text>}
+          {search.status === "paused" && <Text style={{ color: colors.foregroundMuted, fontSize: 13 }}>Query preserved. Press Enter or edit the query to search this folder.</Text>}
           {search.status === "waiting" && <Text style={{ color: colors.foregroundMuted, fontSize: 13 }}>Search starts after a short pause.</Text>}
           {search.status === "searching" && (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -293,7 +446,12 @@ export function SearchPanel({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Retry search"
-                onPress={() => { cancel(); setRetry((value) => value + 1); }}
+                onPress={() => {
+                  authorizedWorkspace.current = workspaceId;
+                  cancel();
+                  if (!initialIndexReady) void index.refetch();
+                  setRetry((value) => value + 1);
+                }}
                 style={{ alignSelf: "flex-start", minHeight: targetSize, justifyContent: "center", paddingHorizontal: 8, backgroundColor: colors.surface1, borderRadius: 4 }}
               >
                 <Text style={{ color: colors.foreground, fontSize: 13 }}>Retry</Text>
@@ -304,9 +462,10 @@ export function SearchPanel({
             <>
               <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>
                 {search.data.totalMatches} {search.data.totalMatches === 1 ? "result" : "results"} in {search.data.totalFiles} {search.data.totalFiles === 1 ? "file" : "files"}
+                {search.data.index.state !== "ready" ? ` · Direct scan (index ${search.data.index.state})` : search.data.index.partial ? " · Partial index with direct scan" : ""}
               </Text>
               {search.data.truncated && <Text style={{ color: colors.statusWarning, fontSize: 12 }}>Results are truncated. Narrow the search.</Text>}
-              {search.data.totalMatches === 0 && <Text style={{ color: colors.foregroundMuted, fontSize: 13 }}>No results. Change the query or the file filters.</Text>}
+              {search.data.totalMatches === 0 && <Text style={{ color: colors.foregroundMuted, fontSize: 13 }}>{search.data.truncated ? "No results in the files that the plugin read. Search is incomplete." : "No results. Change the query or the file filters."}</Text>}
             </>
           )}
           {editor.isError && <Text selectable style={{ color: colors.statusDanger, fontSize: 12 }}>{editor.error.message}</Text>}
