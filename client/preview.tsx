@@ -1,14 +1,14 @@
 import { isSyntaxThemeId, resolveSyntaxColors, type HighlightToken } from "@getpaseo/highlight";
-import { type PluginWorkspacePanelProps, useRpc, useSettings, useTabState } from "@getpaseo/plugin/client";
+import { type PluginWorkspacePanelProps, useRpc, useTabState } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, Text, type TextStyle, View } from "react-native";
 import { z } from "zod";
 import { editorOpen, fileRead } from "../shared/contracts";
-import { findSettings } from "../shared/settings";
 import { expandedOffset, highlightPreview, previewSpans, surfaceColorScheme } from "./highlight";
 import { withAlpha } from "./palette";
+import { readPaseoSyntaxTheme, subscribePaseoSyntaxTheme } from "./web";
 
 const previewTargetSchema = z.object({
   relativePath: z.string().min(1).max(32768),
@@ -181,8 +181,9 @@ function FileLines({ content, target, token, revision, theme, layout }: {
   useEffect(() => {
     if (viewport.height > 0) jump();
   }, [jump, viewport.height, rowHeight, revision, token]);
-  const settings = useSettings(findSettings);
-  const syntaxTheme = settings.status === "ready" && isSyntaxThemeId(settings.values.syntaxTheme) ? settings.values.syntaxTheme : "github";
+  const paseoSyntaxTheme = useSyncExternalStore(subscribePaseoSyntaxTheme, readPaseoSyntaxTheme, readPaseoSyntaxTheme);
+  // "one" is Paseo's own default syntax theme.
+  const syntaxTheme = paseoSyntaxTheme && isSyntaxThemeId(paseoSyntaxTheme) ? paseoSyntaxTheme : "one";
   const syntaxColors = useMemo(
     () => resolveSyntaxColors(syntaxTheme, surfaceColorScheme(theme.colors.surface0)),
     [syntaxTheme, theme.colors.surface0],

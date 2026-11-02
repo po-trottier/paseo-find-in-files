@@ -37,7 +37,7 @@ Results appear below collapsible file headers. Select a match to reuse the read-
 
 Preview keeps indentation and expands tabs to four-column stops. It colors syntax with the same engine as Paseo. The selected line and query match remain marked. Syntax uses at most 768 KiB of source and a 200 ms work budget. Larger files and lines with more than 256 syntax tokens remain plain text.
 
-Query options and the preview target remain in tab state after a reload. The plugin settings screen controls the syntax theme and search shortcut. GitHub is the default syntax theme.
+Query options and the preview target remain in tab state after a reload. The plugin settings screen controls the search shortcut. The preview uses the syntax theme from Paseo Settings > Appearance. The plugin reads it from Paseo's internal `@paseo:app-settings` storage on desktop and web, and checks it again each second. Native clients use Paseo's default theme (`one`).
 
 The default shortcut is **Ctrl+Alt+Shift+F** on Windows and Linux, or **Command+Option+Shift+F** on macOS. Paseo 0.14 does not assign this chord. Its **Ctrl/Command+Shift+F** chord controls focus mode instead. Select the shortcut value in the plugin settings to capture a new chord. Select **Clear** to disable it.
 

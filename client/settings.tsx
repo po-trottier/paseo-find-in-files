@@ -1,12 +1,9 @@
-import { isSyntaxThemeId, SYNTAX_THEME_OPTIONS } from "@getpaseo/highlight";
 import { type PluginSurfaceProps, useSettings } from "@getpaseo/plugin/client";
-import { ScrollView, SettingsCard, SettingsRow, SettingsSection, SettingsSelect } from "@getpaseo/plugin/client/ui";
+import { ScrollView, SettingsCard, SettingsRow, SettingsSection } from "@getpaseo/plugin/client/ui";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { findDefaults, findSettings } from "../shared/settings";
 import type { SearchShortcutController } from "./web";
-
-const syntaxThemes = SYNTAX_THEME_OPTIONS.map(({ id, label }): { value: string; label: string } => ({ value: id, label }));
 
 export function FindSettings({ theme, layout, shortcut }: PluginSurfaceProps & { shortcut: SearchShortcutController }) {
   const settings = useSettings(findSettings);
@@ -54,14 +51,6 @@ export function FindSettings({ theme, layout, shortcut }: PluginSurfaceProps & {
     <ScrollView style={{ flex: 1, backgroundColor: colors.surface0 }} contentContainerStyle={{ padding: layout.compact ? 16 : 24, gap: 20 }}>
       <SettingsSection title="Find in files">
         <SettingsCard>
-          <SettingsSelect
-            label="Syntax theme"
-            hint="Select the colors for file previews."
-            value={values.syntaxTheme}
-            options={syntaxThemes}
-            disabled={disabled || capturing}
-            onValueChange={(syntaxTheme) => { if (isSyntaxThemeId(syntaxTheme)) save({ syntaxTheme }); }}
-          />
           <SettingsRow
             label="Search shortcut"
             hint={web

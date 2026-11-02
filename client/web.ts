@@ -18,8 +18,11 @@ type WebKeyEvent = ShortcutKeyEvent & {
 declare const window: {
   location: { pathname: string };
   navigator: { platform?: string; userAgent?: string; userAgentData?: { platform?: string } };
+  localStorage?: { getItem(key: string): string | null };
   addEventListener(type: "keydown", listener: (event: WebKeyEvent) => void, capture: boolean): void;
   removeEventListener(type: "keydown", listener: (event: WebKeyEvent) => void, capture: boolean): void;
+  setInterval(handler: () => void, ms: number): number;
+  clearInterval(id: number): void;
 };
 declare const document: {
   activeElement: WebElement | null;
@@ -31,6 +34,28 @@ export interface SearchShortcutController {
   cancelCapture(): void;
   setShortcut(value: string): void;
   dispose(): Promise<void>;
+}
+
+// ponytail: reads Paseo's internal app-settings storage key. Replace it when the plugin theme exposes syntax colors.
+const APP_SETTINGS_KEY = "@paseo:app-settings";
+
+/** Paseo's Appearance > syntax theme on desktop and web, or null when it cannot be read (native, no value). */
+export function readPaseoSyntaxTheme(): string | null {
+  if (Platform.OS !== "web" || typeof window === "undefined") return null;
+  try {
+    const value: unknown = JSON.parse(window.localStorage?.getItem(APP_SETTINGS_KEY) ?? "null");
+    const theme = (value as { syntaxTheme?: unknown } | null)?.syntaxTheme;
+    return typeof theme === "string" ? theme : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Paseo writes app settings in this window, which fires no storage event, so poll the small value. */
+export function subscribePaseoSyntaxTheme(onChange: () => void): () => void {
+  if (Platform.OS !== "web" || typeof window === "undefined") return () => {};
+  const id = window.setInterval(onChange, 1000);
+  return () => window.clearInterval(id);
 }
 
 export function registerSearchShortcut(client: PluginClientContext): SearchShortcutController {
