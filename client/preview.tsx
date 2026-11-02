@@ -154,6 +154,14 @@ export function PreviewPanel({ workspaceId, theme, layout, tab, revision, store 
 
 const preformattedStyle: TextStyle & { whiteSpace: "pre" } = { whiteSpace: "pre" };
 
+/** Token colors for Paseo's Appearance syntax theme on the given surface. */
+export function useSyntaxColors(surface: string) {
+  const paseoSyntaxTheme = useSyncExternalStore(subscribePaseoSyntaxTheme, readPaseoSyntaxTheme, readPaseoSyntaxTheme);
+  // "one" is Paseo's own default syntax theme.
+  const syntaxTheme = paseoSyntaxTheme && isSyntaxThemeId(paseoSyntaxTheme) ? paseoSyntaxTheme : "one";
+  return useMemo(() => resolveSyntaxColors(syntaxTheme, surfaceColorScheme(surface)), [syntaxTheme, surface]);
+}
+
 function FileLines({ content, target, token, revision, theme, layout }: {
   content: string;
   target: PreviewTarget;
@@ -181,13 +189,7 @@ function FileLines({ content, target, token, revision, theme, layout }: {
   useEffect(() => {
     if (viewport.height > 0) jump();
   }, [jump, viewport.height, rowHeight, revision, token]);
-  const paseoSyntaxTheme = useSyncExternalStore(subscribePaseoSyntaxTheme, readPaseoSyntaxTheme, readPaseoSyntaxTheme);
-  // "one" is Paseo's own default syntax theme.
-  const syntaxTheme = paseoSyntaxTheme && isSyntaxThemeId(paseoSyntaxTheme) ? paseoSyntaxTheme : "one";
-  const syntaxColors = useMemo(
-    () => resolveSyntaxColors(syntaxTheme, surfaceColorScheme(theme.colors.surface0)),
-    [syntaxTheme, theme.colors.surface0],
-  );
+  const syntaxColors = useSyntaxColors(theme.colors.surface0);
   const [highlighted, setHighlighted] = useState<{ content: string; lines: HighlightToken[][] } | null>(null);
   useEffect(() => {
     const lifetime = new AbortController();

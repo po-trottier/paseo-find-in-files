@@ -1,3 +1,4 @@
+import { highlightLine, isLanguageSupported, type HighlightToken, type SyntaxColors } from "@getpaseo/highlight";
 import type { RpcOutput } from "@getpaseo/plugin";
 import {
   type PluginWorkspacePanelProps,
@@ -12,9 +13,9 @@ import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View, type Tex
 import { z } from "zod";
 import { editorOpen, indexRebuild, indexRelease, indexStatus, searchRun, type SearchMatch } from "../shared/contracts";
 import { caseSensitiveIcon, regexIcon, wholeWordIcon } from "./icons";
-import { expandTabs, expandedOffset } from "./highlight";
+import { previewSpans } from "./highlight";
 import { withAlpha } from "./palette";
-import type { PreviewTarget } from "./preview";
+import { type PreviewTarget, useSyntaxColors } from "./preview";
 
 const searchStateSchema = z.object({
   query: z.string().max(8192),
@@ -61,6 +62,7 @@ export function SearchPanel({
   stateRef.current = state;
   const [searchId] = useState(() => `search-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
   const runSearch = useRpc(searchRun);
+  const syntaxColors = useSyntaxColors(theme.colors.surface0);
   const openEditor = useRpc(editorOpen);
   const editor = useMutation({ mutationFn: openEditor });
   const hostStatus = useHosts().find((item) => item.serverId === host.id)?.status;
@@ -485,6 +487,7 @@ export function SearchPanel({
         <FlatList
           style={{ flex: 1 }}
           data={rows}
+          extraData={syntaxColors}
           keyExtractor={(row) => row.key}
           keyboardShouldPersistTaps="handled"
           initialNumToRender={30}
@@ -519,6 +522,7 @@ export function SearchPanel({
               path={item.path}
               match={item.match}
               theme={theme}
+              syntaxColors={syntaxColors}
               layout={layout}
               disabled={editor.isPending}
               onPreview={() => onPreview(workspaceId, { relativePath: item.path, line: item.match.line, column: item.match.start + 1, endColumn: item.match.end + 1 })}
@@ -531,10 +535,11 @@ export function SearchPanel({
   );
 }
 
-function MatchRow({ path, match, theme, layout, disabled, onPreview, onEditor }: {
+function MatchRow({ path, match, theme, syntaxColors, layout, disabled, onPreview, onEditor }: {
   path: string;
   match: SearchMatch;
   theme: PluginWorkspacePanelProps["theme"];
+  syntaxColors: SyntaxColors;
   layout: PluginWorkspacePanelProps["layout"];
   disabled: boolean;
   onPreview(): void;
@@ -546,11 +551,16 @@ function MatchRow({ path, match, theme, layout, disabled, onPreview, onEditor }:
   const visible = layout.compact || touch || hovered || focused;
   const colors = theme.colors;
   const targetSize = layout.compact ? 44 : 30;
-  const localStart = Math.min(match.text.length, match.start - match.textStart);
-  const text = (match.textStart > 0 ? "…" : "") + expandTabs(match.text);
-  const shift = match.textStart > 0 ? 1 : 0;
-  const start = shift + expandedOffset(match.text, localStart);
-  const end = shift + expandedOffset(match.text, Math.min(match.text.length, match.end - match.textStart));
+  // ponytail: Each row colors only its snippet, so a row that starts inside a string or comment can be off. Use full-file tokens if that matters.
+  const spans = useMemo(() => {
+    let tokens: HighlightToken[] | undefined;
+    try {
+      tokens = isLanguageSupported(path) ? highlightLine(match.text, path) : undefined;
+    } catch {
+      tokens = undefined;
+    }
+    return previewSpans(match.text, tokens, { start: match.start - match.textStart, end: match.end - match.textStart });
+  }, [match, path]);
   const whitespace = layout.platform === "web" ? { whiteSpace: "pre" } as TextStyle & { whiteSpace: "pre" } : null;
   return (
     <View
@@ -562,7 +572,7 @@ function MatchRow({ path, match, theme, layout, disabled, onPreview, onEditor }:
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Preview ${path}, line ${match.line}, column ${match.start + 1}`}
-        accessibilityHint={text}
+        accessibilityHint={match.text}
         onPress={onPreview}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
@@ -580,9 +590,17 @@ function MatchRow({ path, match, theme, layout, disabled, onPreview, onEditor }:
       >
         <Text style={{ minWidth: 26, textAlign: "right", color: colors.foregroundMuted, fontSize: 11 }}>{match.line}</Text>
         <Text numberOfLines={1} style={[{ flex: 1, color: colors.foreground, fontSize: 12, fontFamily: "monospace" }, whitespace]}>
-          {text.slice(0, start)}
-          <Text style={{ color: colors.foreground, backgroundColor: withAlpha(colors.accent, "40") }}>{text.slice(start, end) || "│"}</Text>
-          {text.slice(end)}
+          {match.textStart > 0 && <Text style={{ color: colors.foregroundMuted }}>…</Text>}
+          {spans.map((span, index) => (
+            <Text
+              key={index}
+              style={span.matched
+                ? { color: colors.foreground, backgroundColor: withAlpha(colors.accent, "40") }
+                : { color: span.style ? syntaxColors[span.style] : colors.foreground }}
+            >
+              {span.text}
+            </Text>
+          ))}
         </Text>
       </Pressable>
       <Pressable
