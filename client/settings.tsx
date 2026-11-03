@@ -23,13 +23,27 @@ export function FindSettings({ theme, layout, shortcut }: PluginSurfaceProps & {
   }, [settings.status, values.shortcut, shortcut]);
   useEffect(() => () => shortcut.cancelCapture(), [shortcut]);
 
-  function save(changes: Partial< typeof findDefaults>) {
+  // A change during a save waits and saves after it, so the last choice wins. Example: a press on a
+  // color swatch blurs the hex field, and the blur saves the typed value before the swatch press.
+  const pending = useRef<Partial<typeof findDefaults> | null>(null);
+  function save(changes: Partial<typeof findDefaults>) {
     const current = latestSettings.current;
-    if (current.status !== "ready" || current.saving) return;
+    if (current.status !== "ready") return;
+    if (current.saving) {
+      pending.current = { ...pending.current, ...changes };
+      return;
+    }
     void current.save({ ...current.values, ...changes }, current.revision).then((saved) => {
       if (saved && changes.shortcut !== undefined) shortcut.setShortcut(changes.shortcut);
     });
   }
+  // Runs after the render that ends a save, so `save` reads the new revision.
+  useEffect(() => {
+    if (settings.status !== "ready" || settings.saving || !pending.current) return;
+    const next = pending.current;
+    pending.current = null;
+    save(next);
+  });
   function startCapture() {
     if (disabled || !web || capturing) return;
     setCapturing(true);
@@ -116,7 +130,7 @@ export function FindSettings({ theme, layout, shortcut }: PluginSurfaceProps & {
             label="Selection color"
             hint="Color of selected line numbers and selected code text in the preview."
             value={values.selectionColor}
-            disabled={disabled}
+            disabled={settings.status !== "ready"}
             colors={colors}
             compact={layout.compact}
             onChange={(selectionColor) => save({ selectionColor })}
@@ -125,7 +139,7 @@ export function FindSettings({ theme, layout, shortcut }: PluginSurfaceProps & {
             label="Match line color"
             hint="Color of the preview line that holds the search match, and of the matched text."
             value={values.matchColor}
-            disabled={disabled}
+            disabled={settings.status !== "ready"}
             colors={colors}
             compact={layout.compact}
             onChange={(matchColor) => save({ matchColor })}
@@ -169,7 +183,10 @@ function ColorRow({ label, hint, value, disabled, colors, compact, onChange }: {
                 accessibilityLabel={preset}
                 accessibilityState={{ checked, disabled }}
                 disabled={disabled}
-                onPress={() => onChange(preset)}
+                onPress={() => {
+                  setDraft(preset);
+                  onChange(preset);
+                }}
                 style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: preset, borderWidth: 2, borderColor: checked ? colors.foreground : "transparent" }}
               />
             );
