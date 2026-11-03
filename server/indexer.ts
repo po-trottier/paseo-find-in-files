@@ -349,6 +349,8 @@ export class WorkspaceIndex {
   private readonly documents: Document[] = [];
   private readonly byPath = new Map<string, number>();
   private readonly dirtyPaths = new Map<string, number>();
+  /** Dirty paths with a "rename" event. A folder with one needs a walk. A folder "change" does not. */
+  private readonly renamedPaths = new Set<string>();
   private readonly childRoots = new Map<string, RepositoryBoundary>();
   private readonly authorizedDirectories = new Set<string>();
   private readonly lifetime = new AbortController();
@@ -773,13 +775,14 @@ export class WorkspaceIndex {
     for (const relativePath of this.dirtyPaths.keys()) this.budget.pathUnits -= relativePath.length;
     this.budget.pendingPaths -= this.dirtyPaths.size;
     this.dirtyPaths.clear();
+    this.renamedPaths.clear();
   }
 
   private startWatcher(): void {
     if (this.watcher || this.closed) return;
     this.watcherError = undefined;
     try {
-      this.watcher = watch(this.directory, { recursive: true }, (_event, filename) => {
+      this.watcher = watch(this.directory, { recursive: true }, (event, filename) => {
         if (this.closed) return;
         const relativePath = filename?.toString().split(path.sep).join("/");
         if (relativePath) {
@@ -811,6 +814,7 @@ export class WorkspaceIndex {
           this.budget.pathUnits += relativePath.length;
         }
         this.dirtyPaths.set(relativePath, this.eventVersion);
+        if (event === "rename") this.renamedPaths.add(relativePath);
         this.scheduleRefresh();
       });
       this.watcher.on("error", (error) => {
@@ -873,13 +877,22 @@ export class WorkspaceIndex {
       const existing = this.byPath.has(relativePath);
       let eligible: "file" | "directory" | null = "file";
       if (!existing) eligible = await access.eligible(relativePath, signal);
-      if (eligible === "directory") { this.requestRebuild(); return; }
-      const info = eligible ? await files.lstat(path.join(this.directory, relativePath)).catch((error: NodeJS.ErrnoException) => {
+      const info = eligible === "file" ? await files.lstat(path.join(this.directory, relativePath)).catch((error: NodeJS.ErrnoException) => {
         if (["ENOENT", "ENOTDIR"].includes(error.code ?? "")) return null;
         throw error;
       }) : null;
       checkAborted(signal);
-      if (info?.isDirectory()) { this.requestRebuild(); return; }
+      if (eligible === "directory" || info?.isDirectory()) {
+        // Windows reports a "change" on a folder when a file in it is added, removed, or renamed. That
+        // file has its own event, so only a "rename" (a folder that appeared or moved) needs a walk.
+        if (this.renamedPaths.has(relativePath)) { this.requestRebuild(); return; }
+        // A newer event for this path during the awaits stays queued, and the loop reads it again.
+        if (eventVersion === this.dirtyPaths.get(relativePath) && this.dirtyPaths.delete(relativePath)) {
+          this.budget.pendingPaths--;
+          this.budget.pathUnits -= relativePath.length;
+        }
+        continue;
+      }
       const result = info ? await access.read(relativePath) : { bytes: null, retry: false };
       checkAborted(signal);
       this.remove(relativePath);
@@ -890,6 +903,7 @@ export class WorkspaceIndex {
       }
       this.state.partial ||= access.partial;
       if (eventVersion === this.dirtyPaths.get(relativePath) && this.dirtyPaths.delete(relativePath)) {
+        this.renamedPaths.delete(relativePath);
         this.budget.pendingPaths--;
         this.budget.pathUnits -= relativePath.length;
       }

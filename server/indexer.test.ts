@@ -312,6 +312,41 @@ describe("workspace content index", () => {
     }
   });
 
+  it("updates a new file without a rebuild when Windows also reports a change on its folder", async () => {
+    const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-folder-change-"));
+    const watch = watchFixture();
+    const manager = new IndexManager();
+    try {
+      await files.mkdir(path.join(root, "src"));
+      await files.writeFile(path.join(root, "src", "old.txt"), "oldmarker");
+      const index = await manager.get(root);
+      await vi.waitFor(() => expect(index.status().state).toBe("ready"), { timeout: 5000 });
+      const startedAt = index.status().startedAt;
+      // The event order that Windows gives for a new file.
+      await files.writeFile(path.join(root, "src", "new.txt"), "newmarker");
+      watch.change("src/new.txt", "rename");
+      watch.change("src/new.txt");
+      watch.change("src");
+      await vi.waitFor(async () => {
+        expect(await index.candidates(planQuery("newmarker", false))).toEqual(["src/new.txt"]);
+      }, { timeout: 5000 });
+      expect(index.status()).toMatchObject({ state: "ready", startedAt });
+      // A folder that appears with files in it has no file events, so it needs a walk.
+      await files.mkdir(path.join(root, "moved"));
+      await files.writeFile(path.join(root, "moved", "inside.txt"), "movedmarker");
+      watch.change("moved", "rename");
+      await vi.waitFor(async () => {
+        expect(index.status().state).toBe("ready");
+        expect(await index.candidates(planQuery("movedmarker", false))).toEqual(["moved/inside.txt"]);
+      }, { timeout: 5000 });
+      expect(index.status().startedAt).not.toBe(startedAt);
+    } finally {
+      await manager.dispose();
+      watch.spy.mockRestore();
+      await files.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("ignores watcher changes in excluded paths without rebuilding the index", async () => {
     const root = await files.mkdtemp(path.join(os.tmpdir(), "paseo-index-watch-ignore-"));
     const watch = watchFixture();
