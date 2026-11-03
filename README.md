@@ -66,7 +66,7 @@ Select **Edit** in the preview header to change the file in a plain text box. On
 
 Query options and the preview target remain in tab state after a reload. The plugin settings screen controls the search shortcut. The preview uses the syntax theme from Paseo Settings > Appearance. The plugin reads it from Paseo's internal `@paseo:app-settings` storage on desktop and web, and checks it again each second. Native clients use Paseo's default theme (`one`).
 
-The plugin settings also set two preview colors. **Selection color** (default blue `#3B82F6`) paints selected line numbers and selected code text with the same color. **Match line color** (default amber `#EAB308`) paints the line that holds the search match and the matched text. Select a preset or type a `#RRGGBB` value. The preview adds transparency so the code stays readable.
+The plugin settings also set two preview colors. **Selection color** (default blue `#3B82F6`) paints selected line numbers and selected code text with the same color. **Match line color** (default amber `#EAB308`) paints the line that holds the search match in the preview, and the matched text in the preview and the search results. Select a preset or type a `#RRGGBB` value. The plugin adds transparency so the code stays readable.
 
 The default shortcut is **Ctrl+Alt+Shift+F** on Windows and Linux, or **Command+Option+Shift+F** on macOS. Paseo 0.14 does not assign this chord. Its **Ctrl/Command+Shift+F** chord controls focus mode instead. Select the shortcut value in the plugin settings to capture a new chord. Select **Clear** to disable it.
 

@@ -4,6 +4,7 @@ import {
   type PluginWorkspacePanelProps,
   useHosts,
   useRpc,
+  useSettings,
   useTabState,
 } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/ui";
@@ -12,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Platform, Pressable, Text, TextInput, View, type TextStyle } from "react-native";
 import { z } from "zod";
 import { indexRebuild, indexRelease, indexStatus, searchRun, type SearchMatch } from "../shared/contracts";
+import { findDefaults, findSettings } from "../shared/settings";
 import { type EditorTarget, TargetIcon, useEditorTargets } from "./editors";
 import { caseSensitiveIcon, regexIcon, wholeWordIcon } from "./icons";
 import { previewSpans } from "./highlight";
@@ -65,6 +67,9 @@ export function SearchPanel({
   const [searchId] = useState(() => `search-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
   const runSearch = useRpc(searchRun);
   const syntaxColors = useSyntaxColors(theme.colors.surface0);
+  // The same matched-text color as the preview, from the plugin settings.
+  const settings = useSettings(findSettings);
+  const matchBackground = withAlpha(settings.status === "ready" ? settings.values.matchColor : findDefaults.matchColor, "73");
   const editors = useEditorTargets(workspaceId, host.id);
   const editor = useMutation({
     mutationFn: ({ relativePath, line, column }: { relativePath: string; line: number; column: number }) =>
@@ -493,7 +498,7 @@ export function SearchPanel({
         <FlatList
           style={{ flex: 1 }}
           data={rows}
-          extraData={rowContext}
+          extraData={[rowContext, matchBackground]}
           keyExtractor={(row) => row.key}
           keyboardShouldPersistTaps="handled"
           initialNumToRender={30}
@@ -529,6 +534,7 @@ export function SearchPanel({
               match={item.match}
               theme={theme}
               syntaxColors={syntaxColors}
+              matchBackground={matchBackground}
               layout={layout}
               editor={editors.preferred}
               disabled={editor.isPending}
@@ -542,11 +548,12 @@ export function SearchPanel({
   );
 }
 
-function MatchRow({ path, match, theme, syntaxColors, layout, editor, disabled, onPreview, onEditor }: {
+function MatchRow({ path, match, theme, syntaxColors, matchBackground, layout, editor, disabled, onPreview, onEditor }: {
   path: string;
   match: SearchMatch;
   theme: PluginWorkspacePanelProps["theme"];
   syntaxColors: SyntaxColors;
+  matchBackground: string;
   layout: PluginWorkspacePanelProps["layout"];
   editor: EditorTarget | null;
   disabled: boolean;
@@ -604,7 +611,7 @@ function MatchRow({ path, match, theme, syntaxColors, layout, editor, disabled, 
               key={index}
               // React Native Web does not pass the font of a parent Text to a nested Text.
               style={[codeFont, span.matched
-                ? { color: colors.foreground, backgroundColor: withAlpha(colors.accent, "40") }
+                ? { color: colors.foreground, backgroundColor: matchBackground }
                 : { color: span.style ? syntaxColors[span.style] : colors.foreground }]}
             >
               {span.text}
