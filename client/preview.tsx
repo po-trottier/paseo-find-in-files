@@ -10,7 +10,7 @@ import { type AddToContextMode, findDefaults, findSettings } from "../shared/set
 import { OpenInEditorButton, useEditorTargets } from "./editors";
 import { expandedOffset, highlightPreview, previewSpans, sourceOffset, surfaceColorScheme } from "./highlight";
 import { withAlpha } from "./palette";
-import { clearTextSelection, readPaseoSyntaxTheme, subscribePaseoSyntaxTheme, type TextPick, watchTextSelection } from "./web";
+import { clearTextSelection, readPaseoSyntaxTheme, setPreviewSelectionColor, subscribePaseoSyntaxTheme, type TextPick, watchTextSelection } from "./web";
 
 const previewTargetSchema = z.object({
   relativePath: z.string().min(1).max(32768),
@@ -82,6 +82,9 @@ export function PreviewPanel({ workspaceId, theme, layout, host, tab, revision, 
   const addSnippet = useRpc(snippetAdd);
   const settings = useSettings(findSettings);
   const mode = settings.status === "ready" ? settings.values.addToContext : findDefaults.addToContext;
+  const highlight = settings.status === "ready"
+    ? { selection: settings.values.selectionColor, match: settings.values.matchColor }
+    : { selection: findDefaults.selectionColor, match: findDefaults.matchColor };
   const queryClient = useQueryClient();
   const toast = useToast();
   const colors = theme.colors;
@@ -230,6 +233,7 @@ export function PreviewPanel({ workspaceId, theme, layout, host, tab, revision, 
           theme={theme}
           layout={layout}
           mode={mode}
+          highlight={highlight}
           onAddToContext={addToContext}
         />
       )}
@@ -307,7 +311,7 @@ const contextActions: Record<AddToContextMode, { label: string; icon: string }> 
   both: { label: "Attach and copy", icon: "Paperclip" },
 };
 
-function FileLines({ content, target, token, revision, theme, layout, mode, onAddToContext }: {
+function FileLines({ content, target, token, revision, theme, layout, mode, highlight, onAddToContext }: {
   content: string;
   target: PreviewTarget;
   token: number;
@@ -315,6 +319,7 @@ function FileLines({ content, target, token, revision, theme, layout, mode, onAd
   theme: PluginWorkspacePanelProps["theme"];
   layout: PluginWorkspacePanelProps["layout"];
   mode: AddToContextMode;
+  highlight: { selection: string; match: string };
   onAddToContext(snippet: Snippet): Promise<void>;
 }) {
   const list = useRef<FlatList< string>>(null);
@@ -416,10 +421,16 @@ function FileLines({ content, target, token, revision, theme, layout, mode, onAd
   const menuTop = pick && Math.max(4, Math.min(viewport.height - menuHeight - 4, pick.top - scrollY.current + 4));
   const action = contextActions[mode];
   const pickScope = textPick ? null : range && (range.start === range.end ? `Line ${range.start}` : `Lines ${range.start}-${range.end}`);
+  // Selected lines and selected text share one color. The match line is lighter than its matched text.
+  const selectionBackground = withAlpha(highlight.selection, "59");
+  const matchLineBackground = withAlpha(highlight.match, "2E");
+  const matchTextBackground = withAlpha(highlight.match, "73");
+  useEffect(() => setPreviewSelectionColor(selectionBackground), [selectionBackground]);
 
   return (
     <View
       ref={container}
+      {...({ dataSet: { findPreview: "" } } as object)}
       style={{ flex: 1, minHeight: 0, backgroundColor: colors.surface0 }}
       onLayout={(event) => {
         const { width, height } = event.nativeEvent.layout;
@@ -432,7 +443,7 @@ function FileLines({ content, target, token, revision, theme, layout, mode, onAd
           accessibilityLabel="Read-only file preview"
           style={{ width: Math.max(viewport.width, file.width), height: viewport.height, backgroundColor: colors.surface0 }}
           data={file.lines}
-          extraData={[highlighted, range?.start, range?.end]}
+          extraData={[highlighted, range?.start, range?.end, selectionBackground, matchLineBackground]}
           keyExtractor={(_, index) => String(index)}
           initialScrollIndex={selectedIndex}
           getItemLayout={(_, index) => ({ length: rowHeight, offset: rowHeight * index, index })}
@@ -455,7 +466,7 @@ function FileLines({ content, target, token, revision, theme, layout, mode, onAd
                   height: rowHeight,
                   flexDirection: "row",
                   alignItems: "center",
-                  backgroundColor: inRange ? withAlpha(colors.accent, "45") : index === selectedIndex ? withAlpha(colors.accent, "30") : colors.surface0,
+                  backgroundColor: inRange ? selectionBackground : index === selectedIndex ? matchLineBackground : colors.surface0,
                 }}
               >
                 <View
@@ -480,6 +491,7 @@ function FileLines({ content, target, token, revision, theme, layout, mode, onAd
                   {...({ dataSet: { code: "" } } as object)}
                   selectable
                   numberOfLines={1}
+                  selectionColor={selectionBackground}
                   style={[{ flex: 1, color: colors.foreground, fontSize, fontFamily, lineHeight: 20 }, layout.platform === "web" ? preformattedStyle : undefined]}
                 >
                   {previewSpans(item, tokenLines?.[index], index === selectedIndex ? {
@@ -490,7 +502,7 @@ function FileLines({ content, target, token, revision, theme, layout, mode, onAd
                       key={spanIndex}
                       // React Native Web does not pass the font of a parent Text to a nested Text.
                       style={[{ fontFamily, fontSize }, span.matched
-                        ? { color: colors.foreground, backgroundColor: withAlpha(colors.accent, "60") }
+                        ? { color: colors.foreground, backgroundColor: matchTextBackground }
                         : { color: span.style ? syntaxColors[span.style] : colors.foreground }]}
                     >
                       {span.text}

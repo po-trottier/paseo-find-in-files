@@ -43,9 +43,13 @@ type PageSelection = {
   removeAllRanges(): void;
 };
 type PageRange = { setStart(node: SelectionNode, offset: number): void; setEnd(node: SelectionNode, offset: number): void; toString(): string };
+type StyleElement = { id: string; textContent: string | null };
 declare const document: {
   activeElement: WebElement | null;
+  head: { appendChild(node: StyleElement): void };
   querySelector(selector: string): WebElement | null;
+  getElementById(id: string): StyleElement | null;
+  createElement(tag: "style"): StyleElement;
   getSelection(): PageSelection | null;
   createRange(): PageRange;
   addEventListener(type: "selectionchange", listener: () => void): void;
@@ -99,6 +103,19 @@ export function watchTextSelection(root: unknown, onChange: (pick: TextPick | nu
 /** Clears the page text selection on web. A line number selection replaces a text selection. */
 export function clearTextSelection(): void {
   if (Platform.OS === "web" && typeof document !== "undefined") document.getSelection()?.removeAllRanges();
+}
+
+/** Paints page text selections in views marked `data-find-preview` with `color` on web. */
+export function setPreviewSelectionColor(color: string): void {
+  if (Platform.OS !== "web" || typeof document === "undefined") return;
+  const id = "find-in-files-selection";
+  let style = document.getElementById(id);
+  if (!style) {
+    style = document.createElement("style");
+    style.id = id;
+    document.head.appendChild(style);
+  }
+  style.textContent = `[data-find-preview] ::selection { background-color: ${color}; }`;
 }
 
 export interface SearchShortcutController {

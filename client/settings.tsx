@@ -1,8 +1,8 @@
 import { type PluginSurfaceProps, useSettings } from "@getpaseo/plugin/client";
-import { ScrollView, SettingsCard, SettingsRow, SettingsSection } from "@getpaseo/plugin/client/ui";
+import { ScrollView, SettingsCard, SettingsRow, SettingsSection, TextInput } from "@getpaseo/plugin/client/ui";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { addToContextModes, findDefaults, findSettings } from "../shared/settings";
+import { addToContextModes, colorPresets, findDefaults, findSettings, hexColor } from "../shared/settings";
 import type { SearchShortcutController } from "./web";
 
 export function FindSettings({ theme, layout, shortcut }: PluginSurfaceProps & { shortcut: SearchShortcutController }) {
@@ -112,10 +112,96 @@ export function FindSettings({ theme, layout, shortcut }: PluginSurfaceProps & {
               })}
             </View>
           </SettingsRow>
+          <ColorRow
+            label="Selection color"
+            hint="Color of selected line numbers and selected code text in the preview."
+            value={values.selectionColor}
+            disabled={disabled}
+            colors={colors}
+            compact={layout.compact}
+            onChange={(selectionColor) => save({ selectionColor })}
+          />
+          <ColorRow
+            label="Match line color"
+            hint="Color of the preview line that holds the search match, and of the matched text."
+            value={values.matchColor}
+            disabled={disabled}
+            colors={colors}
+            compact={layout.compact}
+            onChange={(matchColor) => save({ matchColor })}
+          />
         </SettingsCard>
       </SettingsSection>
       {settings.status === "loading" && <Text style={{ color: colors.foregroundMuted }}>Read settings…</Text>}
       {error && <Text selectable accessibilityRole="alert" style={{ color: colors.statusDanger }}>{error}</Text>}
     </ScrollView>
+  );
+}
+
+/** Preset swatches and a `#RRGGBB` field. The field saves on submit or blur when the value is valid. */
+function ColorRow({ label, hint, value, disabled, colors, compact, onChange }: {
+  label: string;
+  hint: string;
+  value: string;
+  disabled: boolean;
+  colors: PluginSurfaceProps["theme"]["colors"];
+  compact: boolean;
+  onChange(color: string): void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const valid = hexColor.safeParse(draft).success;
+  const commit = () => {
+    if (valid && draft.toUpperCase() !== value.toUpperCase()) onChange(draft.toUpperCase());
+    else setDraft(value);
+  };
+  const size = compact ? 32 : 24;
+  return (
+    <SettingsRow label={label} hint={hint}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, opacity: disabled ? 0.5 : 1 }}>
+        <View accessibilityRole="radiogroup" style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+          {colorPresets.map((preset) => {
+            const checked = preset.toUpperCase() === value.toUpperCase();
+            return (
+              <Pressable
+                key={preset}
+                accessibilityRole="radio"
+                accessibilityLabel={preset}
+                accessibilityState={{ checked, disabled }}
+                disabled={disabled}
+                onPress={() => onChange(preset)}
+                style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: preset, borderWidth: 2, borderColor: checked ? colors.foreground : "transparent" }}
+              />
+            );
+          })}
+        </View>
+        <TextInput
+          accessibilityLabel={`${label} hex value`}
+          editable={!disabled}
+          value={draft}
+          onChangeText={setDraft}
+          onSubmitEditing={commit}
+          onBlur={commit}
+          maxLength={7}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          placeholder="#RRGGBB"
+          placeholderTextColor={colors.foregroundMuted}
+          selectionColor={colors.accent}
+          style={{
+            width: 96,
+            minHeight: compact ? 44 : 32,
+            paddingHorizontal: 8,
+            borderRadius: 6,
+            borderWidth: 1,
+            borderColor: valid ? colors.border : colors.statusDanger,
+            backgroundColor: colors.surface1,
+            color: colors.foreground,
+            fontFamily: "monospace",
+          }}
+        />
+        <View style={{ width: size, height: size, borderRadius: 4, backgroundColor: valid ? draft : value, borderWidth: 1, borderColor: colors.border }} />
+      </View>
+    </SettingsRow>
   );
 }
