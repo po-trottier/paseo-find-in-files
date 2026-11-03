@@ -3,10 +3,11 @@ import { type PluginWorkspacePanelProps, useRpc, useSettings, useTabState } from
 import { copyText, Icon, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ActivityIndicator, FlatList, type GestureResponderEvent, Pressable, ScrollView, Text, TextInput, type TextStyle, View, type ViewStyle } from "react-native";
+import { ActivityIndicator, FlatList, type GestureResponderEvent, Pressable, ScrollView, Text, type TextStyle, View, type ViewStyle } from "react-native";
 import { z } from "zod";
 import { fileRead, fileWrite, formatSnippet, snippetAdd } from "../shared/contracts";
 import { type AddToContextMode, findDefaults, findSettings } from "../shared/settings";
+import { EditBox } from "./edit-box";
 import { OpenInEditorButton, useEditorTargets } from "./editors";
 import { expandedOffset, highlightPreview, previewSpans, sourceOffset, surfaceColorScheme } from "./highlight";
 import { withAlpha } from "./palette";
@@ -78,6 +79,7 @@ export function PreviewPanel({ workspaceId, theme, layout, host, tab, revision, 
   const [editorError, setEditorError] = useState<string | null>(null);
   useEffect(() => setEditorError(null), [path]);
   const [editing, setEditing] = useState<Editing | null>(null);
+  const syntaxColors = useSyntaxColors(theme.colors.surface0);
   const writeFile = useRpc(fileWrite);
   const addSnippet = useRpc(snippetAdd);
   const settings = useSettings(findSettings);
@@ -178,27 +180,16 @@ export function PreviewPanel({ workspaceId, theme, layout, host, tab, revision, 
         {editorError && <Text selectable style={{ color: colors.statusDanger, fontSize: 12 }}>{editorError}</Text>}
       </View>
       {editing ? (
-        <TextInput
-          multiline
-          autoFocus
-          editable={!editing.saving}
+        <EditBox
           value={editing.draft}
           onChangeText={(draft) => setEditing((previous) => previous && { ...previous, draft })}
-          autoCapitalize="none"
-          autoCorrect={false}
-          spellCheck={false}
-          accessibilityLabel={`Edit ${editing.path}`}
-          style={[{
-            flex: 1,
-            minHeight: 0,
-            padding,
-            color: colors.foreground,
-            backgroundColor: colors.surface0,
-            fontFamily: layout.platform === "ios" ? "Menlo" : "monospace",
-            fontSize: 13,
-            lineHeight: 20,
-            textAlignVertical: "top",
-          }, layout.platform === "web" ? preformattedStyle : undefined]}
+          editable={!editing.saving}
+          path={editing.path}
+          padding={padding}
+          web={layout.platform === "web"}
+          fontFamily={layout.platform === "ios" ? "Menlo" : "monospace"}
+          colors={colors}
+          syntaxColors={syntaxColors}
         />
       ) : !target ? (
         <Text style={{ padding, color: colors.foregroundMuted, fontSize: 13 }}>Select a search result to preview the file.</Text>

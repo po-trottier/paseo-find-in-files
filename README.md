@@ -62,7 +62,7 @@ A floating button appears below the selection. Its label shows what it does, fro
 
 ### Edit
 
-Select **Edit** in the preview header to change the file in a plain text box. Syntax colors do not show while you edit. Select **Save** to write the file, or **Cancel** to discard the changes. Save keeps the file's line endings and byte order mark. If the file changed on disk after the edit started, the preview shows **Overwrite** and **Discard and reload**. While you edit, a new search result does not replace the editor.
+Select **Edit** in the preview header to change the file in a plain text box. On web and desktop, the text keeps its syntax colors. They update after a short pause in typing. Native clients show plain text. Select **Save** to write the file, or **Cancel** to discard the changes. Save keeps the file's line endings and byte order mark. If the file changed on disk after the edit started, the preview shows **Overwrite** and **Discard and reload**. While you edit, a new search result does not replace the editor.
 
 Query options and the preview target remain in tab state after a reload. The plugin settings screen controls the search shortcut. The preview uses the syntax theme from Paseo Settings > Appearance. The plugin reads it from Paseo's internal `@paseo:app-settings` storage on desktop and web, and checks it again each second. Native clients use Paseo's default theme (`one`).
 
