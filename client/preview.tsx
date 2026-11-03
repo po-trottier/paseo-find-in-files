@@ -327,9 +327,11 @@ function FileLines({ content, target, token, revision, theme, layout, mode, high
     return { lines, gutter, width: gutter + 24 + longest * fontSize };
   }, [content]);
   const selectedIndex = Math.min(file.lines.length - 1, Math.max(0, target.line - 1));
+  // Put the match line about a third down the viewport. Stop at offset 1, not 0: React Native Web's
+  // list ignores a scroll to exactly 0, so a jump from far down to the file start showed blank rows.
   const jump = useCallback(() => {
-    list.current?.scrollToIndex({ index: selectedIndex, animated: false, viewPosition: 0.35 });
-  }, [selectedIndex]);
+    list.current?.scrollToOffset({ offset: Math.max(1, selectedIndex * rowHeight - (viewport.height - rowHeight) * 0.35), animated: false });
+  }, [selectedIndex, rowHeight, viewport.height]);
   useEffect(() => {
     if (viewport.height > 0) jump();
   }, [jump, viewport.height, rowHeight, revision, token]);
