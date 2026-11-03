@@ -47,16 +47,18 @@ Preview keeps indentation and expands tabs to four-column stops. It colors synta
 
 Select code in the preview in one of two ways:
 
-- Select a line number. Shift-click or long-press another line number to select a range. Select the line number again to clear it.
+- Select a line number, or drag over line numbers to select a range. On web and desktop, shift-click a line number to extend the range. Select a single selected line number again to clear it.
 - Drag over the code text. This works on desktop and web.
 
-A floating **Add to context** button appears below the selection. The plugin settings choose what it does:
+The preview keeps one selection. A click or a text selection in the code clears the line numbers, and a line number selection clears the text selection.
+
+A floating button appears below the selection. Its label shows what it does, from the plugin settings:
 
 | Setting | Result |
 | --- | --- |
-| Attachment (default) | Adds the selection to the composer. Select **Add attachment** > **Attach Find in Files selection** in any composer on that host, then pick it. |
-| Copy | Copies the path, line range, and a fenced code block to the clipboard. |
-| Both | Does both. |
+| Attachment (default) | **Attach to chat**. Adds the selection to the composer. Select **Add attachment** > **Attach Find in Files selection** in any composer on that host, then pick it. |
+| Copy | **Copy context**. Copies the path, line range, and a fenced code block to the clipboard. |
+| Both | **Attach and copy**. Does both. |
 
 ### Edit
 

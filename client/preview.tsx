@@ -3,14 +3,14 @@ import { type PluginWorkspacePanelProps, useRpc, useSettings, useTabState } from
 import { copyText, Icon, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ActivityIndicator, FlatList, type GestureResponderEvent, Pressable, ScrollView, Text, TextInput, type TextStyle, View } from "react-native";
+import { ActivityIndicator, FlatList, type GestureResponderEvent, Pressable, ScrollView, Text, TextInput, type TextStyle, View, type ViewStyle } from "react-native";
 import { z } from "zod";
 import { fileRead, fileWrite, formatSnippet, snippetAdd } from "../shared/contracts";
-import { findDefaults, findSettings } from "../shared/settings";
+import { type AddToContextMode, findDefaults, findSettings } from "../shared/settings";
 import { OpenInEditorButton, useEditorTargets } from "./editors";
 import { expandedOffset, highlightPreview, previewSpans, sourceOffset, surfaceColorScheme } from "./highlight";
 import { withAlpha } from "./palette";
-import { readPaseoSyntaxTheme, subscribePaseoSyntaxTheme, type TextPick, watchTextSelection } from "./web";
+import { clearTextSelection, readPaseoSyntaxTheme, subscribePaseoSyntaxTheme, type TextPick, watchTextSelection } from "./web";
 
 const previewTargetSchema = z.object({
   relativePath: z.string().min(1).max(32768),
@@ -90,17 +90,15 @@ export function PreviewPanel({ workspaceId, theme, layout, host, tab, revision, 
   const text = file.data?.kind === "text" ? file.data : null;
   const addToContext = useCallback(async (value: Snippet) => {
     if (!path) return;
-    const done: string[] = [];
     try {
       if (mode !== "copy") {
         await addSnippet({ workspaceId, relativePath: path, ...value });
-        done.push("added to the composer's Find in Files selection picker");
       }
       if (mode !== "attachment") {
         await copyText(formatSnippet(path, value.startLine, value.endLine, value.text));
-        done.push("copied");
       }
-      toast.show(`Selection ${done.join(" and ")}.`, { variant: "success" });
+      const attach = "In the composer, select Add attachment > Attach Find in Files selection.";
+      toast.show(mode === "copy" ? "Context copied." : mode === "both" ? `Context copied. ${attach}` : `Ready to attach. ${attach}`, { variant: "success" });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     }
@@ -231,6 +229,7 @@ export function PreviewPanel({ workspaceId, theme, layout, host, tab, revision, 
           revision={revision}
           theme={theme}
           layout={layout}
+          mode={mode}
           onAddToContext={addToContext}
         />
       )}
@@ -302,13 +301,20 @@ export function useSyntaxColors(surface: string) {
 
 export type Snippet = { startLine: number; endLine: number; text: string };
 
-function FileLines({ content, target, token, revision, theme, layout, onAddToContext }: {
+const contextActions: Record<AddToContextMode, { label: string; icon: string }> = {
+  attachment: { label: "Attach to chat", icon: "Paperclip" },
+  copy: { label: "Copy context", icon: "Copy" },
+  both: { label: "Attach and copy", icon: "Paperclip" },
+};
+
+function FileLines({ content, target, token, revision, theme, layout, mode, onAddToContext }: {
   content: string;
   target: PreviewTarget;
   token: number;
   revision: number;
   theme: PluginWorkspacePanelProps["theme"];
   layout: PluginWorkspacePanelProps["layout"];
+  mode: AddToContextMode;
   onAddToContext(snippet: Snippet): Promise<void>;
 }) {
   const list = useRef<FlatList< string>>(null);
@@ -347,16 +353,45 @@ function FileLines({ content, target, token, revision, theme, layout, onAddToCon
   // Two ways to pick context: line numbers in the gutter, or a text selection (desktop and web).
   const [lines, setLines] = useState<{ anchor: number; focus: number } | null>(null);
   const range = lines && { start: Math.min(lines.anchor, lines.focus), end: Math.max(lines.anchor, lines.focus) };
-  const pressLine = (line: number, extend: boolean) => setLines((previous) => extend && previous
-    ? { anchor: previous.anchor, focus: line }
-    : previous?.anchor === line && previous.focus === line ? null : { anchor: line, focus: line });
+  // Drag over line numbers to select a range. A tap selects one line, and a tap on that line again clears it.
+  // Shift-click extends the range on web. ponytail: the list does not scroll during a drag; drag again after a scroll.
+  const lineDrag = useRef<{ anchor: number; line: number; startY: number; startPageY: number; moved: boolean; toggle: boolean } | null>(null);
+  const startLineDrag = (line: number, { nativeEvent }: GestureResponderEvent) => {
+    const shift = "shiftKey" in nativeEvent && nativeEvent.shiftKey === true;
+    const anchor = shift && lines ? lines.anchor : line;
+    lineDrag.current = {
+      anchor,
+      line,
+      startY: nativeEvent.locationY,
+      startPageY: nativeEvent.pageY,
+      moved: false,
+      toggle: !shift && lines?.anchor === line && lines.focus === line,
+    };
+    clearTextSelection();
+    setTextPick(null);
+    setLines({ anchor, focus: line });
+  };
+  const moveLineDrag = ({ nativeEvent }: GestureResponderEvent) => {
+    const drag = lineDrag.current;
+    if (!drag) return;
+    const offset = Math.floor((drag.startY + nativeEvent.pageY - drag.startPageY) / rowHeight);
+    const focus = Math.min(file.lines.length, Math.max(1, drag.line + offset));
+    if (focus !== drag.line) drag.moved = true;
+    setLines((previous) => previous?.anchor === drag.anchor && previous.focus === focus ? previous : { anchor: drag.anchor, focus });
+  };
+  const endLineDrag = () => {
+    if (lineDrag.current?.toggle && !lineDrag.current.moved) setLines(null);
+    lineDrag.current = null;
+  };
   const scrollY = useRef(0);
   const [, setScrollTick] = useState(0);
   const [textPick, setTextPick] = useState<TextPick | null>(null);
   const pressingMenu = useRef(false);
-  useEffect(() => watchTextSelection(container.current, (pick) => {
+  useEffect(() => watchTextSelection(container.current, (pick, inCode) => {
     // A press on the menu can clear the page selection before the press ends. Keep the pick until then.
     if (pressingMenu.current) return;
+    // One selection at a time: a click or a text selection in the code clears the line numbers.
+    if (inCode && !lineDrag.current) setLines(null);
     setTextPick(pick && { ...pick, top: pick.top + scrollY.current });
   }), []);
   // The page shows lines with tabs expanded. `sourceOffset` maps a displayed offset back to the source line.
@@ -379,7 +414,8 @@ function FileLines({ content, target, token, revision, theme, layout, onAddToCon
   const [adding, setAdding] = useState(false);
   const menuHeight = layout.compact ? 44 : 30;
   const menuTop = pick && Math.max(4, Math.min(viewport.height - menuHeight - 4, pick.top - scrollY.current + 4));
-  const pickLabel = textPick ? "Add selection to context" : range && (range.start === range.end ? `Add line ${range.start} to context` : `Add lines ${range.start}-${range.end} to context`);
+  const action = contextActions[mode];
+  const pickScope = textPick ? null : range && (range.start === range.end ? `Line ${range.start}` : `Lines ${range.start}-${range.end}`);
 
   return (
     <View
@@ -422,18 +458,24 @@ function FileLines({ content, target, token, revision, theme, layout, onAddToCon
                   backgroundColor: inRange ? withAlpha(colors.accent, "45") : index === selectedIndex ? withAlpha(colors.accent, "30") : colors.surface0,
                 }}
               >
-                <Pressable
+                <View
+                  accessible
                   accessibilityRole="button"
                   accessibilityLabel={`Select line ${index + 1}`}
-                  accessibilityHint="Shift-click or long-press another line number to select a range."
-                  onPress={({ nativeEvent }: GestureResponderEvent) => pressLine(index + 1, "shiftKey" in nativeEvent && nativeEvent.shiftKey === true)}
-                  onLongPress={() => pressLine(index + 1, true)}
-                  style={{ width: file.gutter, height: rowHeight, justifyContent: "center" }}
+                  accessibilityHint="Drag over line numbers, or shift-click a line number, to select a range."
+                  onAccessibilityTap={() => setLines({ anchor: index + 1, focus: index + 1 })}
+                  onStartShouldSetResponder={() => true}
+                  onResponderTerminationRequest={() => false}
+                  onResponderGrant={(event) => startLineDrag(index + 1, event)}
+                  onResponderMove={moveLineDrag}
+                  onResponderRelease={endLineDrag}
+                  onResponderTerminate={endLineDrag}
+                  style={{ width: file.gutter, height: rowHeight, justifyContent: "center", cursor: "pointer" } as ViewStyle}
                 >
                   <Text selectable={false} style={{ paddingRight: 10, textAlign: "right", color: inRange ? colors.foreground : colors.foregroundMuted, fontSize: 12, fontFamily, lineHeight: 20 }}>
                     {index + 1}
                   </Text>
-                </Pressable>
+                </View>
                 <Text
                   {...({ dataSet: { code: "" } } as object)}
                   selectable
@@ -482,7 +524,7 @@ function FileLines({ content, target, token, revision, theme, layout, onAddToCon
         >
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={pickLabel ?? "Add to context"}
+            accessibilityLabel={pickScope ? `${action.label}, ${pickScope}` : action.label}
             disabled={adding}
             onPressIn={() => { pressingMenu.current = true; }}
             onPress={() => {
@@ -506,8 +548,9 @@ function FileLines({ content, target, token, revision, theme, layout, onAddToCon
               opacity: adding ? 0.5 : 1,
             })}
           >
-            <Icon name="MessageSquarePlus" size={15} color={colors.foreground} />
-            <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13 }}>{pickLabel}</Text>
+            <Icon name={action.icon} size={15} color={colors.foreground} />
+            <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13 }}>{action.label}</Text>
+            {pickScope && <Text numberOfLines={1} style={{ color: colors.foregroundMuted, fontSize: 12 }}>{pickScope}</Text>}
           </Pressable>
           {!textPick && (
             <Pressable

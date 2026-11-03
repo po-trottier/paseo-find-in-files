@@ -40,6 +40,7 @@ type PageSelection = {
   focusNode: SelectionNode | null;
   focusOffset: number;
   getRangeAt(index: number): { getBoundingClientRect(): { bottom: number } };
+  removeAllRanges(): void;
 };
 type PageRange = { setStart(node: SelectionNode, offset: number): void; setEnd(node: SelectionNode, offset: number): void; toString(): string };
 declare const document: {
@@ -58,9 +59,10 @@ export type TextPick = { start: TextPoint; end: TextPoint; top: number };
 
 /**
  * Reports the page text selection when it lies inside `root`, a React Native Web view. Rows carry
- * `data-line`, and their code text carries `data-code`. Native platforms never report.
+ * `data-line`, and their code text carries `data-code`. `inCode` is true when the selection, collapsed
+ * or not, starts in code text: a click or a drag in the code. Native platforms never report.
  */
-export function watchTextSelection(root: unknown, onChange: (pick: TextPick | null) => void): () => void {
+export function watchTextSelection(root: unknown, onChange: (pick: TextPick | null, inCode: boolean) => void): () => void {
   if (Platform.OS !== "web" || typeof document === "undefined" || !root) return () => {};
   // On web a React Native View ref is its DOM element.
   const element = root as SelectionElement;
@@ -78,17 +80,25 @@ export function watchTextSelection(root: unknown, onChange: (pick: TextPick | nu
   };
   const update = () => {
     const selection = document.getSelection();
-    if (!selection || selection.isCollapsed || !selection.rangeCount || !element.contains(selection.anchorNode) || !element.contains(selection.focusNode)) return onChange(null);
+    if (!selection || !selection.rangeCount || !element.contains(selection.anchorNode)) return onChange(null, false);
+    const anchorNode = selection.anchorNode;
+    const inCode = !!(anchorNode?.nodeType === 1 ? anchorNode as SelectionElement : anchorNode?.parentElement)?.closest("[data-code]");
+    if (selection.isCollapsed || !element.contains(selection.focusNode)) return onChange(null, inCode);
     const anchor = pointOf(selection.anchorNode, selection.anchorOffset);
     const focus = pointOf(selection.focusNode, selection.focusOffset);
-    if (!anchor || !focus) return onChange(null);
+    if (!anchor || !focus) return onChange(null, inCode);
     const [start, end] = anchor.line < focus.line || (anchor.line === focus.line && anchor.offset <= focus.offset) ? [anchor, focus] : [focus, anchor];
-    if (start.line === end.line && start.offset === end.offset) return onChange(null);
+    if (start.line === end.line && start.offset === end.offset) return onChange(null, inCode);
     const top = selection.getRangeAt(0).getBoundingClientRect().bottom - element.getBoundingClientRect().top;
-    onChange({ start, end, top });
+    onChange({ start, end, top }, inCode);
   };
   document.addEventListener("selectionchange", update);
   return () => document.removeEventListener("selectionchange", update);
+}
+
+/** Clears the page text selection on web. A line number selection replaces a text selection. */
+export function clearTextSelection(): void {
+  if (Platform.OS === "web" && typeof document !== "undefined") document.getSelection()?.removeAllRanges();
 }
 
 export interface SearchShortcutController {

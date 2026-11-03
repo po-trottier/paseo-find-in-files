@@ -16,6 +16,6 @@ Search reads files on the daemon machine. Results and preview text go to the con
 
 The index has a memory limit. A partial index checks files that it does not contain directly. Results arrive together after the search, not as a stream.
 
-Select line numbers or drag over code in the preview to show an **Add to context** button. Depending on the plugin setting, it adds the selection as a composer attachment, copies it to the clipboard, or does both. Attachments stay in daemon memory until a restart. Select **Edit** to change the file in a plain text box. Save refuses to overwrite a file that changed on disk unless you select Overwrite.
+Select or drag over line numbers, or drag over code, in the preview. A floating button appears. Depending on the plugin setting, it attaches the selection to the composer (**Attach to chat**), copies it to the clipboard (**Copy context**), or does both. Attachments stay in daemon memory until a restart. Select **Edit** to change the file in a plain text box. Save refuses to overwrite a file that changed on disk unless you select Overwrite.
 
 The preview header has an editor button like the one in the Paseo workspace header. It opens the file at the match line and column in Cursor, VS Code, a JetBrains IDE, the file manager, or another editor that Paseo desktop finds. The button shows only in Paseo desktop for its own local daemon. Result clicks cannot open Paseo's own file tab yet. See [Paseo pull request #7318](https://github.com/getpaseo/paseo/pull/7318).
